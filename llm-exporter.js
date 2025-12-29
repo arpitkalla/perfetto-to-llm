@@ -14,6 +14,32 @@ class LLMExporter {
     }
 
     /**
+     * Get min/max from array safely (avoids stack overflow with large arrays)
+     */
+    static getTimeRange(slices) {
+        let start = Infinity;
+        let end = -Infinity;
+        for (const s of slices) {
+            if (s.startTime < start) start = s.startTime;
+            if (s.endTime > end) end = s.endTime;
+        }
+        return { start, end };
+    }
+
+    /**
+     * Get min/max duration from array safely
+     */
+    static getDurationRange(durations) {
+        let min = Infinity;
+        let max = -Infinity;
+        for (const d of durations) {
+            if (d < min) min = d;
+            if (d > max) max = d;
+        }
+        return { min, max };
+    }
+
+    /**
      * Export slices to specified format
      * @param {Array} slices - Array of slice objects
      * @param {Array} tracks - Array of track objects
@@ -38,157 +64,80 @@ class LLMExporter {
     }
 
     /**
-     * Format to structured text - optimized for LLM parsing
+     * Format to structured text - compact format optimized for LLM parsing
      */
     toStructuredText(slices, tracks, viewInfo) {
         const lines = [];
         
-        lines.push('='.repeat(60));
-        lines.push('PERFETTO TRACE DATA EXPORT');
-        lines.push('='.repeat(60));
-        lines.push('');
-        
-        // Summary
-        lines.push('## SUMMARY');
-        lines.push(`Total Slices: ${slices.length}`);
-        
+        // Compact summary
         const totalDuration = slices.reduce((sum, s) => sum + s.duration, 0);
-        lines.push(`Total Duration: ${TraceParser.formatDuration(totalDuration)}`);
+        const timeRange = LLMExporter.getTimeRange(slices);
+        const span = timeRange.end - timeRange.start;
         
-        const timeRange = {
-            start: Math.min(...slices.map(s => s.startTime)),
-            end: Math.max(...slices.map(s => s.endTime))
-        };
-        lines.push(`Time Range: ${TraceParser.formatTimestamp(timeRange.start)} - ${TraceParser.formatTimestamp(timeRange.end)}`);
-        lines.push(`Span: ${TraceParser.formatDuration(timeRange.end - timeRange.start)}`);
+        lines.push(`TRACE: ${slices.length} slices | ${TraceParser.formatDuration(totalDuration)} total | ${TraceParser.formatDuration(span)} span`);
         lines.push('');
 
         // Group by track
         const byTrack = this.groupByTrack(slices, tracks);
         
-        lines.push('## SLICES BY TRACK');
-        lines.push('-'.repeat(40));
-        
         Object.entries(byTrack).forEach(([trackName, trackSlices]) => {
-            lines.push('');
-            lines.push(`### ${trackName}`);
-            lines.push(`Slice Count: ${trackSlices.length}`);
-            lines.push('');
+            lines.push(`[${trackName}] (${trackSlices.length})`);
             
             // Sort by start time
             trackSlices.sort((a, b) => a.startTime - b.startTime);
             
-            trackSlices.forEach((slice, idx) => {
-                lines.push(`[${idx + 1}] ${slice.name}`);
-                lines.push(`    Start: ${TraceParser.formatTimestamp(slice.startTime)}`);
-                lines.push(`    Duration: ${TraceParser.formatDuration(slice.duration)}`);
-                lines.push(`    Category: ${slice.category || 'none'}`);
-                
-                if (slice.args && Object.keys(slice.args).length > 0) {
-                    lines.push(`    Args: ${JSON.stringify(slice.args)}`);
-                }
-                lines.push('');
+            trackSlices.forEach(slice => {
+                const argsStr = slice.args && Object.keys(slice.args).length > 0 
+                    ? ` ${JSON.stringify(slice.args)}` 
+                    : '';
+                lines.push(`  ${TraceParser.formatTimestamp(slice.startTime)} +${TraceParser.formatDuration(slice.duration)} ${slice.name}${argsStr}`);
             });
+            lines.push('');
         });
 
-        // Statistics
-        lines.push('## STATISTICS');
-        lines.push('-'.repeat(40));
-        
-        const stats = this.calculateStats(slices);
-        lines.push(`Unique Slice Names: ${stats.uniqueNames}`);
-        lines.push(`Average Duration: ${TraceParser.formatDuration(stats.avgDuration)}`);
-        lines.push(`Min Duration: ${TraceParser.formatDuration(stats.minDuration)}`);
-        lines.push(`Max Duration: ${TraceParser.formatDuration(stats.maxDuration)}`);
-        lines.push('');
-        
-        lines.push('Top Slices by Duration:');
-        stats.topByDuration.forEach((s, i) => {
-            lines.push(`  ${i + 1}. ${s.name} - ${TraceParser.formatDuration(s.duration)}`);
-        });
-        lines.push('');
-
-        lines.push('Slice Name Frequency:');
-        Object.entries(stats.nameFrequency)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 10)
-            .forEach(([name, count]) => {
-                lines.push(`  - ${name}: ${count} occurrences`);
-            });
-
-        lines.push('');
-        lines.push('='.repeat(60));
-        lines.push('END OF EXPORT');
-        lines.push('='.repeat(60));
+        // Compact stats - only show if multiple slices
+        if (slices.length > 1) {
+            const stats = this.calculateStats(slices);
+            lines.push(`STATS: avg=${TraceParser.formatDuration(stats.avgDuration)} min=${TraceParser.formatDuration(stats.minDuration)} max=${TraceParser.formatDuration(stats.maxDuration)}`);
+            
+            // Top 3 by duration
+            const top3 = stats.topByDuration.slice(0, 3).map(s => `${s.name}(${TraceParser.formatDuration(s.duration)})`).join(', ');
+            lines.push(`TOP: ${top3}`);
+        }
 
         return lines.join('\n');
     }
 
     /**
-     * Format to Markdown - good for documentation
+     * Format to Markdown - compact table format
      */
     toMarkdown(slices, tracks, viewInfo) {
         const lines = [];
         
-        lines.push('# Perfetto Trace Export');
-        lines.push('');
-        lines.push('## Summary');
-        lines.push('');
-        lines.push(`| Metric | Value |`);
-        lines.push(`|--------|-------|`);
-        lines.push(`| Total Slices | ${slices.length} |`);
-        
         const totalDuration = slices.reduce((sum, s) => sum + s.duration, 0);
-        lines.push(`| Total Duration | ${TraceParser.formatDuration(totalDuration)} |`);
+        const timeRange = LLMExporter.getTimeRange(slices);
         
-        const timeRange = {
-            start: Math.min(...slices.map(s => s.startTime)),
-            end: Math.max(...slices.map(s => s.endTime))
-        };
-        lines.push(`| Time Range | ${TraceParser.formatTimestamp(timeRange.start)} - ${TraceParser.formatTimestamp(timeRange.end)} |`);
+        lines.push(`# Trace: ${slices.length} slices | ${TraceParser.formatDuration(totalDuration)} | ${TraceParser.formatDuration(timeRange.end - timeRange.start)} span`);
         lines.push('');
 
-        // Slices table
-        lines.push('## Slices');
-        lines.push('');
-        lines.push('| # | Name | Track | Start | Duration | Category |');
-        lines.push('|---|------|-------|-------|----------|----------|');
+        // Compact slices table
+        lines.push('| Name | Track | Start | Duration |');
+        lines.push('|------|-------|-------|----------|');
         
-        slices.sort((a, b) => a.startTime - b.startTime).forEach((slice, idx) => {
+        slices.sort((a, b) => a.startTime - b.startTime).forEach(slice => {
             const track = this.getTrackForSlice(slice, tracks);
-            lines.push(`| ${idx + 1} | ${slice.name} | ${track.name} | ${TraceParser.formatTimestamp(slice.startTime)} | ${TraceParser.formatDuration(slice.duration)} | ${slice.category || '-'} |`);
+            lines.push(`| ${slice.name} | ${track.name} | ${TraceParser.formatTimestamp(slice.startTime)} | ${TraceParser.formatDuration(slice.duration)} |`);
         });
-        lines.push('');
 
-        // Args section
+        // Only show args if present and not too many
         const slicesWithArgs = slices.filter(s => s.args && Object.keys(s.args).length > 0);
-        if (slicesWithArgs.length > 0) {
-            lines.push('## Slice Arguments');
+        if (slicesWithArgs.length > 0 && slicesWithArgs.length <= 10) {
             lines.push('');
+            lines.push('## Args');
             slicesWithArgs.forEach(slice => {
-                lines.push(`### ${slice.name} (${TraceParser.formatTimestamp(slice.startTime)})`);
-                lines.push('```json');
-                lines.push(JSON.stringify(slice.args, null, 2));
-                lines.push('```');
-                lines.push('');
+                lines.push(`**${slice.name}**: \`${JSON.stringify(slice.args)}\``);
             });
         }
-
-        // Statistics
-        lines.push('## Statistics');
-        lines.push('');
-        const stats = this.calculateStats(slices);
-        
-        lines.push('### Duration Statistics');
-        lines.push(`- Average: ${TraceParser.formatDuration(stats.avgDuration)}`);
-        lines.push(`- Min: ${TraceParser.formatDuration(stats.minDuration)}`);
-        lines.push(`- Max: ${TraceParser.formatDuration(stats.maxDuration)}`);
-        lines.push('');
-        
-        lines.push('### Top Slices by Duration');
-        stats.topByDuration.forEach((s, i) => {
-            lines.push(`${i + 1}. **${s.name}** - ${TraceParser.formatDuration(s.duration)}`);
-        });
 
         return lines.join('\n');
     }
@@ -197,10 +146,7 @@ class LLMExporter {
      * Format to JSON - for programmatic use
      */
     toJSON(slices, tracks, viewInfo) {
-        const timeRange = {
-            start: Math.min(...slices.map(s => s.startTime)),
-            end: Math.max(...slices.map(s => s.endTime))
-        };
+        const timeRange = LLMExporter.getTimeRange(slices);
 
         const exportData = {
             metadata: {
@@ -241,97 +187,38 @@ class LLMExporter {
     }
 
     /**
-     * Format as analysis prompt - ready to paste into LLM
+     * Format as analysis prompt - compact format for LLM analysis
      */
     toAnalysisPrompt(slices, tracks, viewInfo) {
         const lines = [];
         
-        lines.push('I have a performance trace from an application. Please analyze the following trace data and provide insights:');
-        lines.push('');
-        lines.push('---');
-        lines.push('');
-        lines.push('## Trace Context');
-        lines.push('This trace captures execution events (called "slices") from different threads/processes.');
-        lines.push('Each slice has a name, start time, duration, and associated thread/process.');
-        lines.push('');
-        
-        // Summary
         const totalDuration = slices.reduce((sum, s) => sum + s.duration, 0);
-        const timeRange = {
-            start: Math.min(...slices.map(s => s.startTime)),
-            end: Math.max(...slices.map(s => s.endTime))
-        };
-        
-        lines.push('## Summary');
-        lines.push(`- Total Slices Analyzed: ${slices.length}`);
-        lines.push(`- Time Span: ${TraceParser.formatDuration(timeRange.end - timeRange.start)}`);
-        lines.push(`- Total Execution Time: ${TraceParser.formatDuration(totalDuration)}`);
-        lines.push('');
-
-        // Group by track
-        const byTrack = this.groupByTrack(slices, tracks);
-        
-        lines.push('## Execution Timeline');
-        lines.push('');
-        
-        Object.entries(byTrack).forEach(([trackName, trackSlices]) => {
-            lines.push(`### Thread: ${trackName}`);
-            
-            trackSlices.sort((a, b) => a.startTime - b.startTime);
-            
-            trackSlices.forEach(slice => {
-                const relativeStart = TraceParser.formatTimestamp(slice.startTime - timeRange.start);
-                lines.push(`- [${relativeStart}] **${slice.name}** (${TraceParser.formatDuration(slice.duration)})`);
-                
-                if (slice.args && Object.keys(slice.args).length > 0) {
-                    lines.push(`  - Arguments: \`${JSON.stringify(slice.args)}\``);
-                }
-            });
-            lines.push('');
-        });
-
-        // Statistics
+        const timeRange = LLMExporter.getTimeRange(slices);
         const stats = this.calculateStats(slices);
         
-        lines.push('## Performance Metrics');
+        lines.push('Analyze this performance trace:');
         lines.push('');
-        lines.push('### Duration Distribution');
-        lines.push(`- Average: ${TraceParser.formatDuration(stats.avgDuration)}`);
-        lines.push(`- Min: ${TraceParser.formatDuration(stats.minDuration)}`);
-        lines.push(`- Max: ${TraceParser.formatDuration(stats.maxDuration)}`);
+        lines.push(`${slices.length} slices | ${TraceParser.formatDuration(timeRange.end - timeRange.start)} span | ${TraceParser.formatDuration(totalDuration)} total`);
+        lines.push(`Duration: avg=${TraceParser.formatDuration(stats.avgDuration)} min=${TraceParser.formatDuration(stats.minDuration)} max=${TraceParser.formatDuration(stats.maxDuration)}`);
         lines.push('');
+
+        // Group by track - compact format
+        const byTrack = this.groupByTrack(slices, tracks);
         
-        lines.push('### Hotspots (Top 5 by Duration)');
-        stats.topByDuration.forEach((s, i) => {
-            const track = this.getTrackForSlice(s, tracks);
-            lines.push(`${i + 1}. **${s.name}** in ${track.name} - ${TraceParser.formatDuration(s.duration)}`);
+        Object.entries(byTrack).forEach(([trackName, trackSlices]) => {
+            lines.push(`[${trackName}]`);
+            trackSlices.sort((a, b) => a.startTime - b.startTime);
+            trackSlices.forEach(slice => {
+                const argsStr = slice.args && Object.keys(slice.args).length > 0 ? ` ${JSON.stringify(slice.args)}` : '';
+                lines.push(`  ${TraceParser.formatTimestamp(slice.startTime)} +${TraceParser.formatDuration(slice.duration)} ${slice.name}${argsStr}`);
+            });
         });
         lines.push('');
         
-        lines.push('### Frequency Analysis');
-        Object.entries(stats.nameFrequency)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 5)
-            .forEach(([name, count]) => {
-                lines.push(`- ${name}: ${count} occurrences`);
-            });
+        // Top hotspots
+        lines.push('Hotspots: ' + stats.topByDuration.slice(0, 3).map(s => `${s.name}(${TraceParser.formatDuration(s.duration)})`).join(', '));
         lines.push('');
-        
-        lines.push('---');
-        lines.push('');
-        lines.push('## Questions for Analysis');
-        lines.push('');
-        lines.push('Please analyze this trace data and answer:');
-        lines.push('');
-        lines.push('1. **Performance Bottlenecks**: What are the main performance bottlenecks visible in this trace?');
-        lines.push('');
-        lines.push('2. **Optimization Opportunities**: What optimizations would you suggest based on the execution patterns?');
-        lines.push('');
-        lines.push('3. **Anomalies**: Are there any unusual patterns or potential issues in the trace?');
-        lines.push('');
-        lines.push('4. **Thread Utilization**: How well is the work distributed across threads?');
-        lines.push('');
-        lines.push('5. **Recommendations**: What specific changes would improve the performance of this code?');
+        lines.push('Identify: bottlenecks, optimization opportunities, anomalies');
 
         return lines.join('\n');
     }
@@ -382,11 +269,13 @@ class LLMExporter {
             .sort((a, b) => b.duration - a.duration)
             .slice(0, 5);
 
+        const durationRange = LLMExporter.getDurationRange(durations);
+
         return {
             uniqueNames,
             avgDuration: durations.reduce((a, b) => a + b, 0) / durations.length,
-            minDuration: Math.min(...durations),
-            maxDuration: Math.max(...durations),
+            minDuration: durationRange.min,
+            maxDuration: durationRange.max,
             topByDuration,
             nameFrequency
         };

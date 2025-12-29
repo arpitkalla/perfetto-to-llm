@@ -322,9 +322,13 @@ class TraceViewer {
         const selectedSliceArray = this.slices.filter(s => this.selectedSlices.has(s.id));
         if (selectedSliceArray.length === 0) return;
 
-        // Find min start and max end of selection
-        const minStart = Math.min(...selectedSliceArray.map(s => s.startTime));
-        const maxEnd = Math.max(...selectedSliceArray.map(s => s.endTime));
+        // Find min start and max end of selection (using reduce to avoid stack overflow)
+        let minStart = Infinity;
+        let maxEnd = -Infinity;
+        for (const s of selectedSliceArray) {
+            if (s.startTime < minStart) minStart = s.startTime;
+            if (s.endTime > maxEnd) maxEnd = s.endTime;
+        }
         
         const x1 = this.timeToX(minStart);
         const x2 = this.timeToX(maxEnd);
@@ -371,9 +375,13 @@ class TraceViewer {
             return;
         }
 
-        // Find min start and max end of selection
-        const minStart = Math.min(...selectedSliceArray.map(s => s.startTime));
-        const maxEnd = Math.max(...selectedSliceArray.map(s => s.endTime));
+        // Find min start and max end of selection (using loop to avoid stack overflow)
+        let minStart = Infinity;
+        let maxEnd = -Infinity;
+        for (const s of selectedSliceArray) {
+            if (s.startTime < minStart) minStart = s.startTime;
+            if (s.endTime > maxEnd) maxEnd = s.endTime;
+        }
         const timeDelta = maxEnd - minStart;
         
         const x1 = this.timeToX(minStart);
@@ -619,16 +627,23 @@ class TraceViewer {
     drawSlicesOptimized() {
         let trackY = 0;
         const minSliceWidth = 0.5; // Minimum pixel width to render
+        const collapsedHeight = 28; // Height for hidden tracks
 
         for (const track of this.tracks) {
-            // Skip hidden tracks
-            if (this.hiddenTracks.has(track.id)) continue;
-            
-            const trackHeight = (track.maxDepth || 1) * this.sliceHeight + this.trackPadding * 2;
+            const isHidden = this.hiddenTracks.has(track.id);
+            const trackHeight = isHidden ? collapsedHeight : (track.maxDepth || 1) * this.sliceHeight + this.trackPadding * 2;
 
             // Skip if track is not in visible Y range
             if (trackY > this.height) break;
             if (trackY + trackHeight < 0) {
+                trackY += trackHeight;
+                continue;
+            }
+
+            // For hidden tracks, just draw a subtle background and skip slices
+            if (isHidden) {
+                this.ctx.fillStyle = 'rgba(128, 128, 128, 0.1)';
+                this.ctx.fillRect(0, trackY, this.width, trackHeight);
                 trackY += trackHeight;
                 continue;
             }
@@ -947,12 +962,17 @@ class TraceViewer {
      */
     getSliceAtPosition(x, y) {
         let trackY = 0;
+        const collapsedHeight = 28;
 
         for (const track of this.tracks) {
-            // Skip hidden tracks
-            if (this.hiddenTracks.has(track.id)) continue;
-            
-            const trackHeight = (track.maxDepth || 1) * this.sliceHeight + this.trackPadding * 2;
+            const isHidden = this.hiddenTracks.has(track.id);
+            const trackHeight = isHidden ? collapsedHeight : (track.maxDepth || 1) * this.sliceHeight + this.trackPadding * 2;
+
+            // Skip hidden tracks for slice detection but still count their height
+            if (isHidden) {
+                trackY += trackHeight;
+                continue;
+            }
 
             if (y >= trackY && y < trackY + trackHeight) {
                 // Check slices in this track
@@ -1019,13 +1039,17 @@ class TraceViewer {
 
         const selected = [];
         let trackY = 0;
+        const collapsedHeight = 28;
 
         for (const track of this.tracks) {
-            const trackHeight = (track.maxDepth || 1) * this.sliceHeight + this.trackPadding * 2;
+            const isHidden = this.hiddenTracks.has(track.id);
+            const trackHeight = isHidden ? collapsedHeight : (track.maxDepth || 1) * this.sliceHeight + this.trackPadding * 2;
 
-            // Check if selection overlaps with track
-            // Skip hidden tracks
-            if (this.hiddenTracks.has(track.id)) continue;
+            // Skip hidden tracks for selection but still count their height
+            if (isHidden) {
+                trackY += trackHeight;
+                continue;
+            }
             
             if (y2 >= trackY && y1 < trackY + trackHeight) {
                 // Get all slices that overlap the time range (including parent slices)

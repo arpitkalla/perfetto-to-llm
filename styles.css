@@ -395,6 +395,33 @@ body {
     background: var(--bg-tertiary);
 }
 
+.hidden-tracks-summary {
+    padding: 8px 12px;
+    background: var(--bg-tertiary);
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    position: sticky;
+    bottom: 0;
+}
+
+.hidden-tracks-summary .btn-show-all {
+    padding: 4px 8px;
+    font-size: 0.75rem;
+    background: var(--accent-primary);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.hidden-tracks-summary .btn-show-all:hover {
+    background: #1976D2;
+}
+
 .track-info {
     flex: 1;
     min-width: 0;

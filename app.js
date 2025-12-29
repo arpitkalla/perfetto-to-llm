@@ -392,13 +392,21 @@ class App {
         }
 
         // Multiple slices - show accumulated summary
-        const totalDuration = slices.reduce((sum, s) => sum + s.duration, 0);
-        const minStart = Math.min(...slices.map(s => s.startTime));
-        const maxEnd = Math.max(...slices.map(s => s.endTime));
+        // Use loop instead of spread to avoid stack overflow with large arrays
+        let totalDuration = 0;
+        let minStart = Infinity;
+        let maxEnd = -Infinity;
+        let minDuration = Infinity;
+        let maxDuration = -Infinity;
+        for (const s of slices) {
+            totalDuration += s.duration;
+            if (s.startTime < minStart) minStart = s.startTime;
+            if (s.endTime > maxEnd) maxEnd = s.endTime;
+            if (s.duration < minDuration) minDuration = s.duration;
+            if (s.duration > maxDuration) maxDuration = s.duration;
+        }
         const timeSpan = maxEnd - minStart;
         const avgDuration = totalDuration / slices.length;
-        const minDuration = Math.min(...slices.map(s => s.duration));
-        const maxDuration = Math.max(...slices.map(s => s.duration));
         
         // Group by name
         const byName = {};
