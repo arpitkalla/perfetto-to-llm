@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Perfetto Trace Viewer - LLM Export</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <h1>🔍 Perfetto Trace Viewer</h1>
+            <div class="header-actions">
+                <label class="file-input-label">
+                    📂 Load Trace
+                    <input type="file" id="traceFileInput" accept=".perfetto-trace,.pftrace,.pb,.bin,.json,.systrace,.gz,.json.gz" hidden>
+                </label>
+                <button id="loadDemoBtn" class="btn">📊 Load Demo Trace</button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Toolbar -->
+            <div class="toolbar">
+                <div class="mode-controls">
+                    <div class="mode-toggle">
+                        <button id="panModeBtn" class="btn-mode" title="Pan Mode (Space / P)">
+                            <span class="mode-icon">✋</span> Pan
+                        </button>
+                        <button id="selectModeBtn" class="btn-mode active" title="Select Mode (Esc / S)">
+                            <span class="mode-icon">◻️</span> Select
+                        </button>
+                    </div>
+                </div>
+                <div class="zoom-controls">
+                    <button id="zoomInBtn" class="btn-icon" title="Zoom In">➕</button>
+                    <button id="zoomOutBtn" class="btn-icon" title="Zoom Out">➖</button>
+                    <button id="resetViewBtn" class="btn-icon" title="Reset View">🔄</button>
+                    <span class="zoom-level" id="zoomLevel">100%</span>
+                </div>
+                <div class="track-controls">
+                    <button id="showAllTracksBtn" class="btn" title="Show All Tracks">Show All</button>
+                    <button id="hideAllTracksBtn" class="btn" title="Hide All Tracks">Hide All</button>
+                </div>
+                <div class="selection-controls">
+                    <button id="clearSelectionBtn" class="btn" title="Clear Selection">Clear Selection</button>
+                    <button id="exportLLMBtn" class="btn btn-primary" title="Export to LLM">📋 Copy for LLM</button>
+                </div>
+                <div class="view-info">
+                    <span id="viewRange">-</span>
+                </div>
+            </div>
+
+            <!-- Trace Viewer Container -->
+            <div class="viewer-container">
+                <!-- Selection Time Bar (above slices) -->
+                <div class="selection-time-bar" id="selectionTimeBar">
+                    <div class="time-ruler" id="timeRuler"></div>
+                    <div class="time-bar-content" id="timeBarContent"></div>
+                </div>
+
+                <!-- Track Labels -->
+                <div class="track-labels" id="trackLabels"></div>
+                
+                <!-- Canvas Container -->
+                <div class="canvas-container" id="canvasContainer">
+                    <canvas id="traceCanvas"></canvas>
+                    <div class="selection-overlay" id="selectionOverlay"></div>
+                    <div class="hover-tooltip" id="hoverTooltip"></div>
+                </div>
+
+                <!-- Timeline Ruler -->
+                <div class="timeline-ruler" id="timelineRuler">
+                    <canvas id="rulerCanvas"></canvas>
+                </div>
+            </div>
+
+            <!-- Bottom Details Panel (Collapsible) -->
+            <div class="bottom-panel" id="bottomPanel">
+                <div class="bottom-panel-resize-handle" id="bottomPanelResizeHandle"></div>
+                <div class="bottom-panel-header" id="bottomPanelHeader">
+                    <div class="bottom-panel-tabs">
+                        <button class="bottom-panel-tab active" data-tab="details">
+                            <span class="tab-icon">📋</span> Current Selection
+                        </button>
+                        <button class="bottom-panel-tab" data-tab="llm">
+                            <span class="tab-icon">🤖</span> LLM Export
+                        </button>
+                    </div>
+                    <div class="bottom-panel-actions">
+                        <span class="selection-count" id="selectionCount"></span>
+                        <button class="bottom-panel-toggle" id="bottomPanelToggle" title="Toggle Panel">
+                            <span class="toggle-icon">▼</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="bottom-panel-content" id="bottomPanelContent">
+                    <!-- Details Tab -->
+                    <div class="bottom-tab-content active" id="detailsTab">
+                        <div class="slice-details-grid" id="sliceDetailsGrid">
+                            <p class="placeholder">Click on a slice to see details</p>
+                        </div>
+                    </div>
+                    <!-- LLM Tab -->
+                    <div class="bottom-tab-content" id="llmTab">
+                        <div class="llm-toolbar">
+                            <select id="exportFormat">
+                                <option value="structured">Structured Text</option>
+                                <option value="markdown">Markdown</option>
+                                <option value="json">JSON</option>
+                                <option value="analysis">Analysis Prompt</option>
+                            </select>
+                            <button id="copyLLMBtn" class="btn btn-primary">📋 Copy to Clipboard</button>
+                        </div>
+                        <textarea id="llmOutput" readonly placeholder="Select slices to generate LLM export"></textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <footer class="status-bar">
+            <span id="statusMessage">Ready - Load a Perfetto trace to begin</span>
+            <span id="selectionInfo"></span>
+        </footer>
+    </div>
+
+    <script src="trace-parser.js"></script>
+    <script src="trace-viewer.js"></script>
+    <script src="llm-exporter.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
