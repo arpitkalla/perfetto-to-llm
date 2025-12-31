@@ -101,6 +101,7 @@ class App {
 
         document.getElementById('exportLLMBtn').addEventListener('click', () => {
             this.showBottomPanel('llm');
+            this.copyLLMOutput();
         });
 
         // Bottom panel toggle
