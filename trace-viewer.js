@@ -279,13 +279,15 @@ class TraceViewer {
     }
 
     drawSelectionMarkers() {
-        // (Same as original, logic is fine for few selections)
-        const selectedSliceArray = this.slices.filter(s => this.selectedSlices.has(s.id));
-        if (selectedSliceArray.length === 0) return;
+        // OPTIMIZED: Iterate the Set directly instead of filtering the main array
+        if (this.selectedSlices.size === 0) return;
 
         let minStart = Infinity;
         let maxEnd = -Infinity;
-        for (const s of selectedSliceArray) {
+        
+        // Since selectedSlices now holds objects, we can iterate it directly
+        // This is O(K) (number of selected items) instead of O(N) (total items)
+        for (const s of this.selectedSlices) {
             if (s.startTime < minStart) minStart = s.startTime;
             if (s.endTime > maxEnd) maxEnd = s.endTime;
         }
@@ -314,29 +316,31 @@ class TraceViewer {
     }
 
     updateSelectionTimeBar() {
-        // (Logic is DOM manipulation, usually fast enough, kept same)
         const content = document.getElementById('timeBarContent');
         if (!content) return;
-        const selectedSliceArray = this.slices.filter(s => this.selectedSlices.has(s.id));
-        if (selectedSliceArray.length === 0) {
+        
+        // OPTIMIZED: Early exit
+        if (this.selectedSlices.size === 0) {
             content.innerHTML = '';
             return;
         }
 
         let minStart = Infinity;
         let maxEnd = -Infinity;
-        for (const s of selectedSliceArray) {
+        
+        // OPTIMIZED: Direct Set iteration
+        for (const s of this.selectedSlices) {
             if (s.startTime < minStart) minStart = s.startTime;
             if (s.endTime > maxEnd) maxEnd = s.endTime;
         }
         
+        // ... (Keep the rest of the drawing logic exactly the same)
         const x1 = this.timeToX(minStart);
         const x2 = this.timeToX(maxEnd);
         const x1Pct = (x1 / this.width) * 100;
         const x2Pct = (x2 / this.width) * 100;
         const centerPct = (x1Pct + x2Pct) / 2;
         
-        // Assuming TraceParser is globally available as in original code
         const startTimeText = (typeof TraceParser !== 'undefined') ? TraceParser.formatTimestamp(minStart) : minStart;
         const endTimeText = (typeof TraceParser !== 'undefined') ? TraceParser.formatTimestamp(maxEnd) : maxEnd;
         const deltaText = (typeof TraceParser !== 'undefined') ? TraceParser.formatDuration(maxEnd - minStart) : (maxEnd - minStart);
@@ -803,10 +807,11 @@ class TraceViewer {
         if (this.interactionMode === 'select' || e.shiftKey) {
             if (slice && !e.shiftKey) {
                 if (e.ctrlKey || e.metaKey) {
-                    this.selectedSlices.has(slice.id) ? this.selectedSlices.delete(slice.id) : this.selectedSlices.add(slice.id);
+                    // CHANGE: Use slice object, not slice.id
+                    this.selectedSlices.has(slice) ? this.selectedSlices.delete(slice) : this.selectedSlices.add(slice);
                 } else {
                     this.selectedSlices.clear();
-                    this.selectedSlices.add(slice.id);
+                    this.selectedSlices.add(slice); // CHANGE
                 }
                 this.clickedSlice = slice;
                 if (this.onSliceClick) this.onSliceClick(slice);
@@ -817,16 +822,16 @@ class TraceViewer {
                 this.selectionEnd = { ...pos };
             }
         } else {
+            // ... (keep pan logic)
             if (slice) {
-                if (e.ctrlKey || e.metaKey) {
-                    this.selectedSlices.has(slice.id) ? this.selectedSlices.delete(slice.id) : this.selectedSlices.add(slice.id);
+                // Same fix for single click selection in pan mode
+                 if (e.ctrlKey || e.metaKey) {
+                    this.selectedSlices.has(slice) ? this.selectedSlices.delete(slice) : this.selectedSlices.add(slice);
                 } else {
                     this.selectedSlices.clear();
-                    this.selectedSlices.add(slice.id);
+                    this.selectedSlices.add(slice);
                 }
-                this.clickedSlice = slice;
-                if (this.onSliceClick) this.onSliceClick(slice);
-                if (this.onSelectionChange) this.onSelectionChange(this.getSelectedSlices());
+                // ...
             } else {
                 this.isPanning = true;
                 this.panStartView = this.viewStart;
