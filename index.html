@@ -33,7 +33,9 @@
                     <input type="file" id="traceFileInput" accept=".perfetto-trace,.pftrace,.pb,.bin,.json,.systrace,.gz,.json.gz" hidden>
                 </label>
                 <button id="loadDemoBtn" class="btn">Load Demo Trace</button>
-                <a href="https://github.com/arpitkalla/perfetto-to-llm" target="_blank" rel="noopener" class="github-link" style="margin-left:1em;font-size:1.1em;">View on GitHub</a>
+                <a href="https://github.com/arpitkalla/perfetto-to-llm" target="_blank" rel="noopener" class="github-link" style="margin-left:1em;font-size:1.3em;" title="View on GitHub">
+                    <i class="fa-brands fa-github" style="vertical-align: middle; display: inline-block; line-height: 1; position: relative; top: 2px;"></i>
+                </a>
             </div>
         </header>
 
@@ -97,7 +99,6 @@
                     <div class="bottom-panel-tabs">
                         <button class="bottom-panel-tab active" data-tab="details">Current Selection</button>
                         <button class="bottom-panel-tab" data-tab="llm">LLM Export</button>
-                        <button class="bottom-panel-tab" data-tab="llm-template">LLM Prompt Template</button>
                     </div>
                     <div class="bottom-panel-actions">
                         <span class="selection-count" id="selectionCount"></span>
@@ -125,24 +126,6 @@
                             <button id="copyLLMBtn" class="btn btn-primary">Copy to Clipboard</button>
                         </div>
                         <textarea id="llmOutput" readonly placeholder="Select slices to generate LLM export"></textarea>
-                    </div>
-                    <!-- LLM Prompt Template Tab -->
-                    <div class="bottom-tab-content" id="llmTemplateTab">
-                        <div class="llm-template-toolbar">
-                            <button id="saveTemplateBtn" class="btn btn-primary">Save Template</button>
-                        </div>
-                        <textarea id="llmTemplateInput" placeholder="Write your LLM prompt template here. Use &lt;slice.name&gt;, &lt;slice.start_ts&gt;, &lt;slice.end_ts&gt;, &lt;slice.duration&gt;, &lt;slice.args&gt; etc."></textarea>
-                        <div class="llm-template-help">
-                            <strong>Available meta tags:</strong>
-                            <ul>
-                                <li>&lt;slice.name&gt;</li>
-                                <li>&lt;slice.start_ts&gt;</li>
-                                <li>&lt;slice.end_ts&gt;</li>
-                                <li>&lt;slice.duration&gt;</li>
-                                <li>&lt;slice.args&gt;</li>
-                            </ul>
-                            <small>These will be replaced with the corresponding values for each slice.</small>
-                        </div>
                     </div>
                 </div>
             </div>
