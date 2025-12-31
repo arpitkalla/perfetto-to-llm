@@ -291,7 +291,7 @@ class TraceViewer {
             if (s.startTime < minStart) minStart = s.startTime;
             if (s.endTime > maxEnd) maxEnd = s.endTime;
         }
-        
+
         const x1 = this.timeToX(minStart);
         const x2 = this.timeToX(maxEnd);
         
@@ -610,7 +610,7 @@ class TraceViewer {
         }
 
         // Text Optimization: Only draw if wide enough
-        if (visibleWidth > 20) {
+        if (visibleWidth > 10) {
             this.ctx.save();
             this.ctx.beginPath();
             this.ctx.rect(visibleX1, y, visibleWidth, height);
