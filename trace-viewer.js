@@ -287,7 +287,7 @@ class TraceViewer {
         
         // Since selectedSlices now holds objects, we can iterate it directly
         // This is O(K) (number of selected items) instead of O(N) (total items)
-        for (const s of this.selectedSlices) {
+        for (const s of this.getSelectedSlices()) {
             if (s.startTime < minStart) minStart = s.startTime;
             if (s.endTime > maxEnd) maxEnd = s.endTime;
         }
@@ -329,7 +329,7 @@ class TraceViewer {
         let maxEnd = -Infinity;
         
         // OPTIMIZED: Direct Set iteration
-        for (const s of this.selectedSlices) {
+        for (const s of this.getSelectedSlices()) {
             if (s.startTime < minStart) minStart = s.startTime;
             if (s.endTime > maxEnd) maxEnd = s.endTime;
         }
@@ -807,11 +807,10 @@ class TraceViewer {
         if (this.interactionMode === 'select' || e.shiftKey) {
             if (slice && !e.shiftKey) {
                 if (e.ctrlKey || e.metaKey) {
-                    // CHANGE: Use slice object, not slice.id
-                    this.selectedSlices.has(slice) ? this.selectedSlices.delete(slice) : this.selectedSlices.add(slice);
+                    this.selectedSlices.has(slice.id) ? this.selectedSlices.delete(slice.id) : this.selectedSlices.add(slice.id);
                 } else {
                     this.selectedSlices.clear();
-                    this.selectedSlices.add(slice); // CHANGE
+                    this.selectedSlices.add(slice.id);
                 }
                 this.clickedSlice = slice;
                 if (this.onSliceClick) this.onSliceClick(slice);
@@ -826,10 +825,10 @@ class TraceViewer {
             if (slice) {
                 // Same fix for single click selection in pan mode
                  if (e.ctrlKey || e.metaKey) {
-                    this.selectedSlices.has(slice) ? this.selectedSlices.delete(slice) : this.selectedSlices.add(slice);
+                    this.selectedSlices.has(slice.id) ? this.selectedSlices.delete(slice.id) : this.selectedSlices.add(slice.id);
                 } else {
                     this.selectedSlices.clear();
-                    this.selectedSlices.add(slice);
+                    this.selectedSlices.add(slice.id);
                 }
                 // ...
             } else {
