@@ -291,7 +291,7 @@ class TraceViewer {
             if (s.startTime < minStart) minStart = s.startTime;
             if (s.endTime > maxEnd) maxEnd = s.endTime;
         }
-
+        
         const x1 = this.timeToX(minStart);
         const x2 = this.timeToX(maxEnd);
         
@@ -584,7 +584,7 @@ class TraceViewer {
 
         // Use cached colors
         const colors = this.colorCache[colorIdx % this.colorCache.length];
-        
+
         if (isSelected) {
             this.ctx.fillStyle = colors.selected;
             this.ctx.fillRect(visibleX1, y, visibleWidth, height);
@@ -803,7 +803,7 @@ class TraceViewer {
         this.dragStartX = pos.x;
         this.dragStartY = pos.y;
         const slice = this.getSliceAtPosition(pos.x, pos.y);
-
+        
         if (this.interactionMode === 'select' || e.shiftKey) {
             if (slice && !e.shiftKey) {
                 if (e.ctrlKey || e.metaKey) {
@@ -819,6 +819,7 @@ class TraceViewer {
                 this.isSelecting = true;
                 this.selectionStart = { ...pos };
                 this.selectionEnd = { ...pos };
+                this.clickedSlice = null;
             }
         } else {
             // ... (keep pan logic)
