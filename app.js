@@ -454,7 +454,7 @@ class App {
                             </tr>
                             <tr>
                                 <td class="label">Total Duration</td>
-                                <td class="value highlight">${TraceParser.formatDuration(totalDuration)}</td>
+                                <td class="value">${TraceParser.formatDuration(totalDuration)}</td>
                                 <td class="label">Avg Duration</td>
                                 <td class="value">${TraceParser.formatDuration(avgDuration)}</td>
                             </tr>

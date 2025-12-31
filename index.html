@@ -6,6 +6,7 @@
     <title>Perfetto Trace Viewer - LLM Export</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 
     <!-- SEO Meta Tags -->
     <meta name="description" content="Perfetto Trace Viewer with LLM Export: Visualize, analyze, and export Perfetto traces for large language models. Supports Chrome, Android, and custom traces. Fast, private, and open source.">
@@ -25,14 +26,14 @@
     <div class="app-container">
         <!-- Header -->
         <header class="header">
-            <h1>🔍 Perfetto Trace Viewer</h1>
+            <h1>Perfetto Trace Viewer</h1>
             <div class="header-actions">
                 <label class="file-input-label">
-                    📂 Load Trace
+                    Load Trace
                     <input type="file" id="traceFileInput" accept=".perfetto-trace,.pftrace,.pb,.bin,.json,.systrace,.gz,.json.gz" hidden>
                 </label>
-                <button id="loadDemoBtn" class="btn">📊 Load Demo Trace</button>
-                <a href="https://github.com/arpitkalla/perfetto-to-llm" target="_blank" rel="noopener" class="github-link" style="margin-left:1em;font-size:1.1em;">🐙 View on GitHub</a>
+                <button id="loadDemoBtn" class="btn">Load Demo Trace</button>
+                <a href="https://github.com/arpitkalla/perfetto-to-llm" target="_blank" rel="noopener" class="github-link" style="margin-left:1em;font-size:1.1em;">View on GitHub</a>
             </div>
         </header>
 
@@ -42,18 +43,14 @@
             <div class="toolbar">
                 <div class="mode-controls">
                     <div class="mode-toggle">
-                        <button id="panModeBtn" class="btn-mode" title="Pan Mode (Space / P)">
-                            <span class="mode-icon">✋</span> Pan
-                        </button>
-                        <button id="selectModeBtn" class="btn-mode active" title="Select Mode (Esc / S)">
-                            <span class="mode-icon">◻️</span> Select
-                        </button>
+                        <button id="panModeBtn" class="btn-mode" title="Pan Mode (Space / P)">Pan</button>
+                        <button id="selectModeBtn" class="btn-mode active" title="Select Mode (Esc / S)">Select</button>
                     </div>
                 </div>
                 <div class="zoom-controls">
-                    <button id="zoomInBtn" class="btn-icon" title="Zoom In">➕</button>
-                    <button id="zoomOutBtn" class="btn-icon" title="Zoom Out">➖</button>
-                    <button id="resetViewBtn" class="btn-icon" title="Reset View">🔄</button>
+                    <button id="zoomInBtn" class="btn-icon" title="Zoom In"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
+                    <button id="zoomOutBtn" class="btn-icon" title="Zoom Out"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
+                    <button id="resetViewBtn" class="btn-icon" title="Reset View"><i class="fa-solid fa-rotate-right"></i></button>
                     <span class="zoom-level" id="zoomLevel">100%</span>
                 </div>
                 <div class="track-controls">
@@ -62,7 +59,7 @@
                 </div>
                 <div class="selection-controls">
                     <button id="clearSelectionBtn" class="btn" title="Clear Selection">Clear Selection</button>
-                    <button id="exportLLMBtn" class="btn btn-primary" title="Export to LLM">📋 Copy for LLM</button>
+                    <button id="exportLLMBtn" class="btn btn-primary" title="Export to LLM">Copy for LLM</button>
                 </div>
                 <div class="view-info">
                     <span id="viewRange">-</span>
@@ -98,17 +95,14 @@
                 <div class="bottom-panel-resize-handle" id="bottomPanelResizeHandle"></div>
                 <div class="bottom-panel-header" id="bottomPanelHeader">
                     <div class="bottom-panel-tabs">
-                        <button class="bottom-panel-tab active" data-tab="details">
-                            <span class="tab-icon">📋</span> Current Selection
-                        </button>
-                        <button class="bottom-panel-tab" data-tab="llm">
-                            <span class="tab-icon">🤖</span> LLM Export
-                        </button>
+                        <button class="bottom-panel-tab active" data-tab="details">Current Selection</button>
+                        <button class="bottom-panel-tab" data-tab="llm">LLM Export</button>
+                        <button class="bottom-panel-tab" data-tab="llm-template">LLM Prompt Template</button>
                     </div>
                     <div class="bottom-panel-actions">
                         <span class="selection-count" id="selectionCount"></span>
                         <button class="bottom-panel-toggle" id="bottomPanelToggle" title="Toggle Panel">
-                            <span class="toggle-icon">▼</span>
+                            <span class="toggle-icon"><i class="fa-solid fa-chevron-down"></i></span>
                         </button>
                     </div>
                 </div>
@@ -128,9 +122,27 @@
                                 <option value="json">JSON</option>
                                 <option value="analysis">Analysis Prompt</option>
                             </select>
-                            <button id="copyLLMBtn" class="btn btn-primary">📋 Copy to Clipboard</button>
+                            <button id="copyLLMBtn" class="btn btn-primary">Copy to Clipboard</button>
                         </div>
                         <textarea id="llmOutput" readonly placeholder="Select slices to generate LLM export"></textarea>
+                    </div>
+                    <!-- LLM Prompt Template Tab -->
+                    <div class="bottom-tab-content" id="llmTemplateTab">
+                        <div class="llm-template-toolbar">
+                            <button id="saveTemplateBtn" class="btn btn-primary">Save Template</button>
+                        </div>
+                        <textarea id="llmTemplateInput" placeholder="Write your LLM prompt template here. Use &lt;slice.name&gt;, &lt;slice.start_ts&gt;, &lt;slice.end_ts&gt;, &lt;slice.duration&gt;, &lt;slice.args&gt; etc."></textarea>
+                        <div class="llm-template-help">
+                            <strong>Available meta tags:</strong>
+                            <ul>
+                                <li>&lt;slice.name&gt;</li>
+                                <li>&lt;slice.start_ts&gt;</li>
+                                <li>&lt;slice.end_ts&gt;</li>
+                                <li>&lt;slice.duration&gt;</li>
+                                <li>&lt;slice.args&gt;</li>
+                            </ul>
+                            <small>These will be replaced with the corresponding values for each slice.</small>
+                        </div>
                     </div>
                 </div>
             </div>

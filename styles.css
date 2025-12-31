@@ -1,17 +1,17 @@
 /* CSS Variables */
 :root {
-    --bg-primary: #1a1a2e;
-    --bg-secondary: #16213e;
-    --bg-tertiary: #0f3460;
-    --text-primary: #eee;
-    --text-secondary: #aaa;
-    --accent-primary: #e94560;
-    --accent-secondary: #0f4c75;
-    --border-color: #2a2a4a;
-    --hover-bg: rgba(233, 69, 96, 0.1);
-    --selection-bg: rgba(233, 69, 96, 0.3);
-    --success: #4caf50;
-    --warning: #ff9800;
+    --bg-primary: #f7f7fa;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #f0f2f5;
+    --text-primary: #222;
+    --text-secondary: #555;
+    --accent-primary: #2563eb;
+    --accent-secondary: #e0e7ef;
+    --border-color: #d1d5db;
+    --hover-bg: #e0e7ef;
+    --selection-bg: #c7d2fe;
+    --success: #22c55e;
+    --warning: #f59e42;
 }
 
 /* Reset & Base */
@@ -34,6 +34,7 @@ body {
     display: flex;
     flex-direction: column;
     height: 100vh;
+    background: var(--bg-primary);
 }
 
 /* Header */
@@ -76,10 +77,11 @@ body {
 .btn-primary {
     background: var(--accent-primary);
     border-color: var(--accent-primary);
+    color: #fff;
 }
 
 .btn-primary:hover {
-    background: #d63a52;
+    background: #1746a2;
 }
 
 .btn-icon {
@@ -124,6 +126,8 @@ body {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
 }
 
 /* Toolbar */
@@ -203,6 +207,8 @@ body {
     overflow: hidden;
     position: relative;
     padding-bottom: 36px; /* Space for collapsed bottom panel */
+    background: var(--bg-secondary);
+    color: var(--text-primary);
 }
 
 /* Selection Time Bar */
@@ -451,6 +457,7 @@ body {
     bottom: 30px;
     overflow: hidden;
     cursor: grab;
+    background: var(--bg-secondary);
 }
 
 .canvas-container.pan-mode {
@@ -698,6 +705,7 @@ body {
     border-radius: 6px;
     padding: 12px;
     border: 1px solid var(--border-color);
+    color: var(--text-primary);
 }
 
 .detail-card-header {
@@ -718,8 +726,8 @@ body {
 
 .detail-card-duration {
     font-size: 0.75rem;
-    color: var(--accent-secondary);
-    background: rgba(76, 175, 80, 0.2);
+    color: #1976d2;
+    background: rgba(25, 118, 210, 0.08);
     padding: 2px 6px;
     border-radius: 4px;
     white-space: nowrap;
@@ -729,6 +737,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 6px;
+    color: var(--text-primary);
 }
 
 .detail-row {
@@ -746,6 +755,7 @@ body {
     text-align: right;
     word-break: break-word;
     max-width: 60%;
+    font-weight: 500;
 }
 
 .detail-row.args {
@@ -910,7 +920,7 @@ body {
 
 .breakdown-table .col-total {
     text-align: right;
-    color: var(--accent-secondary);
+    color: var(--text-secondary);
     font-weight: 600;
     white-space: nowrap;
 }
@@ -993,21 +1003,14 @@ body {
 
 /* Scrollbar */
 ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-
-::-webkit-scrollbar-track {
-    background: var(--bg-primary);
+    background: #e5e7eb;
+    width: 10px;
+    height: 10px;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: var(--border-color);
-    border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: var(--accent-secondary);
+    background: #cbd5e1;
+    border-radius: 5px;
 }
 
 /* Slice colors */

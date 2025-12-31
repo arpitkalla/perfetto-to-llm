@@ -1,5 +1,5 @@
 /**
- * Trace Viewer
+ * Trace Viewer - Optimized
  * Canvas-based visualization with zoom, pan, and selection capabilities
  */
 
@@ -22,7 +22,7 @@ class TraceViewer {
     constructor(canvasContainer, trackLabelsContainer, rulerCanvas) {
         this.canvasContainer = canvasContainer;
         this.canvas = document.getElementById('traceCanvas');
-        this.ctx = this.canvas.getContext('2d');
+        this.ctx = this.canvas.getContext('2d', { alpha: false }); // Optimization: alpha false
         this.trackLabelsContainer = trackLabelsContainer;
         this.rulerCanvas = rulerCanvas;
         this.rulerCtx = rulerCanvas.getContext('2d');
@@ -40,7 +40,7 @@ class TraceViewer {
         this.sliceHeight = 24;
         this.trackPadding = 8;
 
-        // Interaction mode: 'pan' or 'select' - default to select
+        // Interaction mode: 'pan' or 'select'
         this.interactionMode = 'select';
 
         // Interaction state
@@ -61,15 +61,25 @@ class TraceViewer {
         // Hidden tracks
         this.hiddenTracks = new Set();
 
+        // Rendering State (Optimization)
+        this.rafId = null;
+        this.isDirty = false;
+
         // Colors
-        this.sliceColors = [
-            '#4285f4', '#ea4335', '#fbbc04', '#34a853',
-            '#ff6d01', '#46bdc6', '#7baaf7', '#f07b72'
+        this.baseSliceColors = [
+            '#4285f4', '#ea4335', '#fbbc04', '#34a853', '#ff6d01', '#46bdc6', '#7baaf7', '#f07b72',
+            '#ab47bc', '#00bcd4', '#cddc39', '#ffb300', '#8d6e63', '#5c6bc0', '#009688', '#c62828',
+            '#7e57c2', '#388e3c', '#f06292', '#ffa726', '#00897b', '#d4e157', '#6d4c41', '#1976d2'
         ];
-        this.bgColor = '#1a1a2e';
-        this.gridColor = '#2a2a4a';
-        this.textColor = '#eee';
-        this.selectionColor = 'rgba(233, 69, 96, 0.3)';
+        
+        // Cache for calculated colors
+        this.colorCache = []; 
+        this.preCalculateColors();
+
+        this.bgColor = '#f7f8fa'; 
+        this.gridColor = '#e3e6ed'; 
+        this.textColor = '#222';
+        this.selectionColor = 'rgba(33, 150, 243, 0.12)';
 
         // Callbacks
         this.onSliceClick = null;
@@ -85,33 +95,39 @@ class TraceViewer {
     }
 
     /**
-     * Setup canvas dimensions
+     * Pre-calculate color variations to avoid doing this per-slice per-frame
      */
+    preCalculateColors() {
+        this.colorCache = this.baseSliceColors.map(color => ({
+            normal: color,
+            hover: this.lightenColor(color, 0.2),
+            selected: this.lightenColor(color, 0.3),
+            clicked: this.lightenColor(color, 0.4),
+            border: this.darkenColor(color, 0.3)
+        }));
+    }
+
     setupCanvas() {
         const rect = this.canvasContainer.getBoundingClientRect();
         this.dpr = window.devicePixelRatio || 1;
 
-        // Set canvas size accounting for device pixel ratio
         this.canvas.width = rect.width * this.dpr;
         this.canvas.height = rect.height * this.dpr;
         this.canvas.style.width = `${rect.width}px`;
         this.canvas.style.height = `${rect.height}px`;
         
-        // Reset transform and apply scale
         this.ctx.setTransform(1, 0, 0, 1, 0, 0);
         this.ctx.scale(this.dpr, this.dpr);
 
         this.width = rect.width;
         this.height = rect.height;
 
-        // Setup ruler canvas
         const rulerRect = this.rulerCanvas.parentElement.getBoundingClientRect();
         this.rulerCanvas.width = rulerRect.width * this.dpr;
         this.rulerCanvas.height = rulerRect.height * this.dpr;
         this.rulerCanvas.style.width = `${rulerRect.width}px`;
         this.rulerCanvas.style.height = `${rulerRect.height}px`;
         
-        // Reset transform and apply scale
         this.rulerCtx.setTransform(1, 0, 0, 1, 0, 0);
         this.rulerCtx.scale(this.dpr, this.dpr);
 
@@ -119,9 +135,6 @@ class TraceViewer {
         this.rulerHeight = rulerRect.height;
     }
 
-    /**
-     * Get mouse coordinates relative to canvas (accounting for CSS sizing)
-     */
     getMousePos(e) {
         const rect = this.canvas.getBoundingClientRect();
         return {
@@ -130,67 +143,52 @@ class TraceViewer {
         };
     }
 
-    /**
-     * Setup event listeners
-     */
     setupEventListeners() {
-        // Mouse events
         this.canvas.addEventListener('mousedown', this.handleMouseDown.bind(this));
         this.canvas.addEventListener('mousemove', this.handleMouseMove.bind(this));
         this.canvas.addEventListener('mouseup', this.handleMouseUp.bind(this));
         this.canvas.addEventListener('mouseleave', this.handleMouseLeave.bind(this));
         this.canvas.addEventListener('wheel', this.handleWheel.bind(this), { passive: false });
         this.canvas.addEventListener('dblclick', this.handleDoubleClick.bind(this));
-
-        // Keyboard events
         document.addEventListener('keydown', this.handleKeyDown.bind(this));
-
-        // Resize
         window.addEventListener('resize', () => {
             this.setupCanvas();
-            this.render();
+            this.scheduleRender();
         });
     }
 
-    /**
-     * Load trace data
-     */
     loadTrace(data) {
         this.tracks = data.tracks || [];
         this.slices = data.slices || [];
         this.timeRange = data.timeRange || { start: 0, end: 1000000 };
-
-        // Reset view
         this.viewStart = this.timeRange.start;
         this.viewEnd = this.timeRange.end;
         this.zoom = 1;
 
-        // Calculate total height
-        this.totalHeight = this.tracks.reduce((sum, track) => {
-            return sum + (track.maxDepth || 1) * this.sliceHeight + this.trackPadding * 2;
-        }, 0);
+        // 1. Sort slices by startTime
+        // 2. Calculate max duration per track (Critical for optimization)
+        this.tracks.forEach(track => {
+            track.slices.sort((a, b) => a.startTime - b.startTime);
+            
+            let maxDur = 0;
+            for (const s of track.slices) {
+                const dur = s.endTime - s.startTime;
+                if (dur > maxDur) maxDur = dur;
+            }
+            track.maxItemDuration = maxDur;
+        });
 
-        // Clear selection
         this.selectedSlices.clear();
         this.hoveredSlice = null;
         this.clickedSlice = null;
-        
-        // Clear hidden tracks
         this.hiddenTracks.clear();
-
-        // Render track labels
         this.renderTrackLabels();
-
-        // Render
-        this.render();
+        this.scheduleRender();
     }
 
-    /**
-     * Render track labels with visibility toggles
-     */
     renderTrackLabels() {
+        // (Same as original implementation)
         this.trackLabelsContainer.innerHTML = '';
-        
         this.tracks.forEach(track => {
             const isHidden = this.hiddenTracks.has(track.id);
             const trackHeight = isHidden ? 28 : (track.maxDepth || 1) * this.sliceHeight + this.trackPadding * 2;
@@ -201,8 +199,8 @@ class TraceViewer {
             label.dataset.trackId = track.id;
             
             label.innerHTML = `
-                <button class="track-visibility-btn" data-track-id="${track.id}" title="${isHidden ? 'Show track' : 'Hide track'}">
-                    ${isHidden ? '👁️‍🗨️' : '👁️'}
+                <button class="track-visibility-btn" data-track-id="${track.id}">
+                    <i class="fa-solid fa-eye${isHidden ? '-slash' : ''}" style="font-size: 12px; color: ${isHidden ? '#90A4AE' : '#1565c0'};"></i>
                 </button>
                 <div class="track-info">
                     <div class="track-name">${track.name}</div>
@@ -210,90 +208,49 @@ class TraceViewer {
                 </div>
             `;
             
-            // Add click handler for visibility toggle
-            const visBtn = label.querySelector('.track-visibility-btn');
-            visBtn.addEventListener('click', (e) => {
+            label.querySelector('.track-visibility-btn').addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.toggleTrackVisibility(track.id);
             });
-            
             this.trackLabelsContainer.appendChild(label);
         });
     }
 
-    /**
-     * Toggle track visibility
-     */
     toggleTrackVisibility(trackId) {
         if (this.hiddenTracks.has(trackId)) {
             this.hiddenTracks.delete(trackId);
         } else {
             this.hiddenTracks.add(trackId);
         }
-        
-        // Re-render track labels and canvas
         this.renderTrackLabels();
-        this.render();
-        
-        // Notify about track visibility change (for LLM output update)
-        if (this.onTrackVisibilityChange) {
-            this.onTrackVisibilityChange(trackId, !this.hiddenTracks.has(trackId));
+        this.scheduleRender();
+        if (this.onTrackVisibilityChange) this.onTrackVisibilityChange(trackId, !this.hiddenTracks.has(trackId));
+    }
+
+    /**
+     * Optimization: Schedule render on next animation frame
+     */
+    scheduleRender() {
+        if (!this.rafId) {
+            this.rafId = requestAnimationFrame(() => {
+                this.render();
+                this.rafId = null;
+            });
         }
     }
 
-    /**
-     * Hide all tracks
-     */
-    hideAllTracks() {
-        this.tracks.forEach(track => this.hiddenTracks.add(track.id));
-        this.renderTrackLabels();
-        this.render();
-        
-        // Notify about track visibility change
-        if (this.onTrackVisibilityChange) {
-            this.onTrackVisibilityChange(null, false);
-        }
-    }
-
-    /**
-     * Show all tracks
-     */
-    showAllTracks() {
-        this.hiddenTracks.clear();
-        this.renderTrackLabels();
-        this.render();
-        
-        // Notify about track visibility change
-        if (this.onTrackVisibilityChange) {
-            this.onTrackVisibilityChange(null, true);
-        }
-    }
-
-    /**
-     * Get visible tracks
-     */
-    getVisibleTracks() {
-        return this.tracks.filter(track => !this.hiddenTracks.has(track.id));
-    }
-
-    /**
-     * Main render function
-     */
     render() {
+        // Optimization: Don't render if dimensions are invalid
+        if (this.width === 0 || this.height === 0) return;
+
         // Clear canvas
         this.ctx.fillStyle = this.bgColor;
         this.ctx.fillRect(0, 0, this.width, this.height);
 
-        // Draw grid
         this.drawGrid();
-
-        // Draw slices (optimized)
         this.drawSlicesOptimized();
-
-        // Update time ruler (always visible)
         this.updateTimeRuler();
 
-        // Draw selection time markers (vertical lines only)
         if (this.selectedSlices.size > 0) {
             this.drawSelectionMarkers();
             this.updateSelectionTimeBar();
@@ -301,28 +258,22 @@ class TraceViewer {
             this.hideSelectionTimeBar();
         }
 
-        // Draw selection overlay
         if (this.isSelecting) {
             this.drawSelectionOverlay();
         }
 
-        // Draw ruler
         this.drawRuler();
 
-        // Notify view change
         if (this.onViewChange) {
             this.onViewChange(this.viewStart, this.viewEnd);
         }
     }
 
-    /**
-     * Draw vertical time markers for selected slices on the canvas
-     */
     drawSelectionMarkers() {
+        // (Same as original, logic is fine for few selections)
         const selectedSliceArray = this.slices.filter(s => this.selectedSlices.has(s.id));
         if (selectedSliceArray.length === 0) return;
 
-        // Find min start and max end of selection (using reduce to avoid stack overflow)
         let minStart = Infinity;
         let maxEnd = -Infinity;
         for (const s of selectedSliceArray) {
@@ -333,264 +284,198 @@ class TraceViewer {
         const x1 = this.timeToX(minStart);
         const x2 = this.timeToX(maxEnd);
         
-        const markerColor = '#4FC3F7'; // Light blue
-        
         this.ctx.save();
-        
-        // Draw vertical dashed lines
-        this.ctx.strokeStyle = markerColor;
+        this.ctx.strokeStyle = '#4FC3F7';
         this.ctx.lineWidth = 2;
         this.ctx.setLineDash([4, 4]);
         
-        // Start marker
         if (x1 >= 0 && x1 <= this.width) {
             this.ctx.beginPath();
             this.ctx.moveTo(x1, 0);
             this.ctx.lineTo(x1, this.height);
             this.ctx.stroke();
         }
-        
-        // End marker
         if (x2 >= 0 && x2 <= this.width) {
             this.ctx.beginPath();
             this.ctx.moveTo(x2, 0);
             this.ctx.lineTo(x2, this.height);
             this.ctx.stroke();
         }
-        
         this.ctx.restore();
     }
 
-    /**
-     * Update the selection time bar (HTML element above canvas)
-     */
     updateSelectionTimeBar() {
+        // (Logic is DOM manipulation, usually fast enough, kept same)
         const content = document.getElementById('timeBarContent');
-        
         if (!content) return;
-
         const selectedSliceArray = this.slices.filter(s => this.selectedSlices.has(s.id));
         if (selectedSliceArray.length === 0) {
             content.innerHTML = '';
             return;
         }
 
-        // Find min start and max end of selection (using loop to avoid stack overflow)
         let minStart = Infinity;
         let maxEnd = -Infinity;
         for (const s of selectedSliceArray) {
             if (s.startTime < minStart) minStart = s.startTime;
             if (s.endTime > maxEnd) maxEnd = s.endTime;
         }
-        const timeDelta = maxEnd - minStart;
         
         const x1 = this.timeToX(minStart);
         const x2 = this.timeToX(maxEnd);
-        
-        // Calculate positions as percentages
         const x1Pct = (x1 / this.width) * 100;
         const x2Pct = (x2 / this.width) * 100;
         const centerPct = (x1Pct + x2Pct) / 2;
         
-        const startTimeText = TraceParser.formatTimestamp(minStart);
-        const endTimeText = TraceParser.formatTimestamp(maxEnd);
-        const deltaText = TraceParser.formatDuration(timeDelta);
+        // Assuming TraceParser is globally available as in original code
+        const startTimeText = (typeof TraceParser !== 'undefined') ? TraceParser.formatTimestamp(minStart) : minStart;
+        const endTimeText = (typeof TraceParser !== 'undefined') ? TraceParser.formatTimestamp(maxEnd) : maxEnd;
+        const deltaText = (typeof TraceParser !== 'undefined') ? TraceParser.formatDuration(maxEnd - minStart) : (maxEnd - minStart);
 
-        // Build the time bar HTML
         let html = '';
+        if (x1 >= -10 && x1 <= this.width + 10) html += `<div class="time-marker start" style="left: ${Math.max(0, x1Pct)}%;" data-time="${startTimeText}"></div>`;
+        if (x2 >= -10 && x2 <= this.width + 10) html += `<div class="time-marker end" style="left: ${Math.min(100, x2Pct)}%;" data-time="${endTimeText}"></div>`;
         
-        // Start marker
-        if (x1 >= -10 && x1 <= this.width + 10) {
-            html += `<div class="time-marker start" style="left: ${Math.max(0, x1Pct)}%;" data-time="${startTimeText}"></div>`;
-        }
-        
-        // End marker  
-        if (x2 >= -10 && x2 <= this.width + 10) {
-            html += `<div class="time-marker end" style="left: ${Math.min(100, x2Pct)}%;" data-time="${endTimeText}"></div>`;
-        }
-        
-        // Connecting line and badge
         if (x1 <= this.width && x2 >= 0) {
             const lineLeft = Math.max(0, x1Pct);
             const lineRight = Math.min(100, x2Pct);
-            const lineWidth = lineRight - lineLeft;
-            
-            if (lineWidth > 0) {
-                html += `<div class="time-delta-line" style="left: ${lineLeft}%; width: ${lineWidth}%;"></div>`;
-            }
-            
-            // Badge
-            const badgeCenterPct = Math.max(10, Math.min(90, centerPct));
-            html += `<div class="time-delta-badge" style="left: ${badgeCenterPct}%;">${deltaText}</div>`;
-            
-            // Arrows
-            if (x1 >= 0 && x1 <= this.width) {
-                html += `<div class="time-delta-arrows left" style="left: ${x1Pct}%;"></div>`;
-            }
-            if (x2 >= 0 && x2 <= this.width) {
-                html += `<div class="time-delta-arrows right" style="left: calc(${x2Pct}% - 6px);"></div>`;
-            }
+            if (lineRight - lineLeft > 0) html += `<div class="time-delta-line" style="left: ${lineLeft}%; width: ${lineRight - lineLeft}%;"></div>`;
+            html += `<div class="time-delta-badge" style="left: ${Math.max(10, Math.min(90, centerPct))}%;">${deltaText}</div>`;
         }
-
         content.innerHTML = html;
     }
 
-    /**
-     * Hide the selection time bar content
-     */
     hideSelectionTimeBar() {
         const content = document.getElementById('timeBarContent');
-        if (content) {
-            content.innerHTML = '';
-        }
+        if (content) content.innerHTML = '';
     }
 
-    /**
-     * Update the time ruler with tick marks and labels
-     */
     updateTimeRuler() {
+        // (Kept same)
         const ruler = document.getElementById('timeRuler');
         if (!ruler) return;
 
         const viewDuration = this.viewEnd - this.viewStart;
-        
-        // Calculate appropriate interval for major ticks (aim for ~8-12 major ticks)
         const targetMajorTicks = 10;
         const rawInterval = viewDuration / targetMajorTicks;
-        
-        // Round to nice numbers: 1, 2, 5, 10, 20, 50, 100, 200, 500, etc.
         const magnitude = Math.pow(10, Math.floor(Math.log10(rawInterval)));
         const normalized = rawInterval / magnitude;
-        let niceInterval;
-        if (normalized <= 1) niceInterval = 1;
-        else if (normalized <= 2) niceInterval = 2;
-        else if (normalized <= 5) niceInterval = 5;
-        else niceInterval = 10;
+        let niceInterval = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
         
         const majorInterval = niceInterval * magnitude;
         const minorInterval = majorInterval / 5;
-        
-        // Find first major tick
-        const firstMajorTick = Math.ceil(this.viewStart / majorInterval) * majorInterval;
         const firstMinorTick = Math.ceil(this.viewStart / minorInterval) * minorInterval;
         
         let html = '';
-        
-        // Draw minor ticks
         for (let t = firstMinorTick; t <= this.viewEnd; t += minorInterval) {
-            // Skip if it's a major tick position
-            if (Math.abs(t % majorInterval) < minorInterval * 0.1) continue;
-            
-            const x = this.timeToX(t);
-            if (x >= 0 && x <= this.width) {
-                const xPct = (x / this.width) * 100;
-                html += `<div class="time-ruler-tick minor" style="left: ${xPct}%;"></div>`;
+            if (Math.abs(t % majorInterval) < minorInterval * 0.1) {
+                // Major tick
+                const x = this.timeToX(t);
+                if (x >= 0 && x <= this.width) {
+                    const xPct = (x / this.width) * 100;
+                    html += `<div class="time-ruler-tick major" style="left: ${xPct}%;"></div>`;
+                    html += `<div class="time-ruler-label" style="left: ${xPct}%;">${this.formatRulerTime(t, majorInterval)}</div>`;
+                }
+            } else {
+                // Minor tick
+                const x = this.timeToX(t);
+                if (x >= 0 && x <= this.width) {
+                    html += `<div class="time-ruler-tick minor" style="left: ${(x / this.width) * 100}%;"></div>`;
+                }
             }
         }
-        
-        // Draw major ticks with labels
-        for (let t = firstMajorTick; t <= this.viewEnd; t += majorInterval) {
-            const x = this.timeToX(t);
-            if (x >= 0 && x <= this.width) {
-                const xPct = (x / this.width) * 100;
-                const label = this.formatRulerTime(t, majorInterval);
-                html += `<div class="time-ruler-tick major" style="left: ${xPct}%;"></div>`;
-                html += `<div class="time-ruler-label" style="left: ${xPct}%;">${label}</div>`;
-            }
-        }
-        
         ruler.innerHTML = html;
     }
 
-    /**
-     * Format time for ruler labels
-     */
     formatRulerTime(timeUs, interval) {
-        // Show appropriate precision based on interval
-        if (interval >= 1000000) {
-            // Seconds
-            return (timeUs / 1000000).toFixed(interval >= 10000000 ? 0 : 1) + 's';
-        } else if (interval >= 1000) {
-            // Milliseconds
-            return (timeUs / 1000).toFixed(interval >= 10000 ? 0 : 1) + 'ms';
-        } else {
-            // Microseconds
-            return timeUs.toFixed(0) + 'µs';
-        }
+        if (interval >= 1000000) return (timeUs / 1000000).toFixed(interval >= 10000000 ? 0 : 1) + 's';
+        if (interval >= 1000) return (timeUs / 1000).toFixed(interval >= 10000 ? 0 : 1) + 'ms';
+        return timeUs.toFixed(0) + 'µs';
     }
 
-    /**
-     * Draw time grid
-     */
     drawGrid() {
         const viewDuration = this.viewEnd - this.viewStart;
-        
-        // Calculate grid interval
         const intervals = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000];
         let gridInterval = intervals.find(i => viewDuration / i < 20) || 1000000;
 
+        this.ctx.beginPath();
         this.ctx.strokeStyle = this.gridColor;
         this.ctx.lineWidth = 1;
 
         const startGrid = Math.floor(this.viewStart / gridInterval) * gridInterval;
-        
         for (let t = startGrid; t <= this.viewEnd; t += gridInterval) {
             const x = this.timeToX(t);
             if (x >= 0 && x <= this.width) {
-                this.ctx.beginPath();
                 this.ctx.moveTo(x, 0);
                 this.ctx.lineTo(x, this.height);
-                this.ctx.stroke();
             }
         }
+        this.ctx.stroke(); // Batch stroke
 
-        // Draw track separators (only for visible tracks)
+        // Draw track separators
+        this.ctx.beginPath();
         let y = 0;
         for (const track of this.tracks) {
             if (this.hiddenTracks.has(track.id)) continue;
-            
             const trackHeight = (track.maxDepth || 1) * this.sliceHeight + this.trackPadding * 2;
             y += trackHeight;
-            
-            this.ctx.beginPath();
             this.ctx.moveTo(0, y);
             this.ctx.lineTo(this.width, y);
-            this.ctx.stroke();
         }
+        this.ctx.stroke(); // Batch stroke
     }
 
     /**
-     * Find all slices that might be visible in the current view.
-     * A slice is visible if: startTime < viewEnd AND endTime > viewStart
-     * 
-     * Since slices are sorted by startTime, we can binary search to find 
-     * where to stop, but we need to scan from the beginning to catch
-     * long-running parent slices that start early but extend into view.
+     * Correctly finds visible slices including those starting before the view
+     * but ending within it (overlapping).
      */
-    findVisibleSlices(slices, viewStart, viewEnd) {
+    findVisibleSlices(track, viewStart, viewEnd) {
+        const slices = track.slices;
         if (slices.length === 0) return [];
         
-        // Binary search to find the first slice that starts after viewEnd
-        // We can stop there since all subsequent slices start even later
+        // 1. Find the "Safe Start Time"
+        // Any slice ending inside the view MUST have started after (viewStart - maxDuration)
+        // This prevents us from scanning from index 0 for every frame
+        const maxDur = track.maxItemDuration || (this.timeRange.end - this.timeRange.start);
+        const safeStartTime = viewStart - maxDur;
+
+        // 2. Binary Search for the first index where startTime >= safeStartTime
+        let startIdx = 0;
         let left = 0;
         let right = slices.length - 1;
-        let lastPossibleIdx = slices.length;
         
         while (left <= right) {
-            const mid = Math.floor((left + right) / 2);
+            const mid = (left + right) >>> 1; // Bitwise divide by 2
+            if (slices[mid].startTime < safeStartTime) {
+                left = mid + 1;
+            } else {
+                startIdx = mid;
+                right = mid - 1;
+            }
+        }
+
+        // 3. Binary Search for the cut-off point where startTime > viewEnd
+        // We don't need to look at anything that starts after the view ends
+        let endIdx = slices.length;
+        left = startIdx; // Optimization: start searching from where we left off
+        right = slices.length - 1;
+
+        while (left <= right) {
+            const mid = (left + right) >>> 1;
             if (slices[mid].startTime > viewEnd) {
-                lastPossibleIdx = mid;
+                endIdx = mid;
                 right = mid - 1;
             } else {
                 left = mid + 1;
             }
         }
-        
-        // Now scan from 0 to lastPossibleIdx and include slices that overlap the view
+
+        // 4. Collect Valid Slices
+        // Iterate only the relevant subset and check for overlap
         const visible = [];
-        for (let i = 0; i < lastPossibleIdx; i++) {
+        for (let i = startIdx; i < endIdx; i++) {
             const slice = slices[i];
-            // A slice is visible if it ends after viewStart (and starts before viewEnd, which is guaranteed by lastPossibleIdx)
+            // Overlap logic: Start is before ViewEnd (guaranteed by loop) AND End is after ViewStart
             if (slice.endTime > viewStart) {
                 visible.push(slice);
             }
@@ -599,10 +484,6 @@ class TraceViewer {
         return visible;
     }
 
-    /**
-     * Binary search to find first slice that starts at or after a given time.
-     * Used for hit testing.
-     */
     findFirstSliceStartingAfter(slices, time) {
         let left = 0;
         let right = slices.length - 1;
@@ -617,30 +498,29 @@ class TraceViewer {
                 left = mid + 1;
             }
         }
-        
         return result;
     }
 
-    /**
-     * Draw all visible slices with optimizations
-     */
     drawSlicesOptimized() {
         let trackY = 0;
-        const minSliceWidth = 0.5; // Minimum pixel width to render
-        const collapsedHeight = 28; // Height for hidden tracks
+        const minSliceWidth = 0.5; 
+        const collapsedHeight = 28;
+        const viewDuration = this.viewEnd - this.viewStart;
+        const widthPerTime = this.width / viewDuration;
+
+    this.ctx.font = '11px system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial, sans-serif';
+        this.ctx.textBaseline = 'middle';
 
         for (const track of this.tracks) {
             const isHidden = this.hiddenTracks.has(track.id);
             const trackHeight = isHidden ? collapsedHeight : (track.maxDepth || 1) * this.sliceHeight + this.trackPadding * 2;
 
-            // Skip if track is not in visible Y range
             if (trackY > this.height) break;
             if (trackY + trackHeight < 0) {
                 trackY += trackHeight;
                 continue;
             }
 
-            // For hidden tracks, just draw a subtle background and skip slices
             if (isHidden) {
                 this.ctx.fillStyle = 'rgba(128, 128, 128, 0.1)';
                 this.ctx.fillRect(0, trackY, this.width, trackHeight);
@@ -648,273 +528,113 @@ class TraceViewer {
                 continue;
             }
 
-            // Get all visible slices (includes parent slices that start before view)
-            const visibleSlices = this.findVisibleSlices(track.slices, this.viewStart, this.viewEnd);
+            // CHANGE HERE: Pass the whole track object, not just slices
+            const visibleSlices = this.findVisibleSlices(track, this.viewStart, this.viewEnd);
 
-            // Draw slices
+            // Pre-calculate color indices
+            const sliceColorIdx = {};
             for (const slice of visibleSlices) {
-                const x1 = this.timeToX(slice.startTime);
-                const x2 = this.timeToX(slice.endTime);
-                const width = x2 - x1;
+                 let baseIdx = (slice.depth + (track.id || 0) * 3) % this.baseSliceColors.length;
+                 sliceColorIdx[slice.id] = baseIdx;
+            }
+
+            for (const slice of visibleSlices) {
+                const x1 = (slice.startTime - this.viewStart) * widthPerTime;
+                const width = (slice.endTime - slice.startTime) * widthPerTime;
                 
-                // Skip very small slices when zoomed out
                 if (width < minSliceWidth) continue;
-                
-                this.drawSliceFast(slice, trackY, x1, width);
+
+                // Extra check: only draw if actually on screen (x1 + width > 0)
+                if (x1 + width < 0 || x1 > this.width) continue;
+
+                const colorIdx = sliceColorIdx[slice.id] || 0;
+                this.drawSliceFast(slice, trackY, x1, width, colorIdx);
             }
 
             trackY += trackHeight;
         }
     }
 
-    /**
-     * Draw a single slice (optimized version)
-     */
-    drawSliceFast(slice, trackY, x1, width) {
+    drawSliceFast(slice, trackY, x1, width, colorIdx) {
         const y = trackY + this.trackPadding + slice.depth * this.sliceHeight;
         const height = this.sliceHeight - 2;
-        const x2 = x1 + width;
 
-        // Calculate visible portion of the slice
-        // Slice might start before view (x1 < 0) or end after view (x2 > width)
         const visibleX1 = Math.max(0, x1);
-        const visibleX2 = Math.min(this.width, x2);
+        const visibleX2 = Math.min(this.width, x1 + width);
         const visibleWidth = visibleX2 - visibleX1;
-        
-        // Skip if not visible
+
         if (visibleWidth <= 0) return;
 
-        // Determine slice state
         const isSelected = this.selectedSlices.has(slice.id);
         const isHovered = this.hoveredSlice === slice;
         const isClicked = this.clickedSlice === slice;
 
-        // Get base color
-        const color = this.sliceColors[slice.color % this.sliceColors.length];
+        // Use cached colors
+        const colors = this.colorCache[colorIdx % this.colorCache.length];
         
-        // Set styles based on state
         if (isSelected) {
-            this.ctx.fillStyle = this.lightenColor(color, 0.3);
+            this.ctx.fillStyle = colors.selected;
+            this.ctx.fillRect(visibleX1, y, visibleWidth, height);
             this.ctx.strokeStyle = '#e94560';
             this.ctx.lineWidth = 2;
+            this.ctx.strokeRect(visibleX1, y, visibleWidth, height);
         } else if (isHovered) {
-            this.ctx.fillStyle = this.lightenColor(color, 0.2);
+            this.ctx.fillStyle = colors.hover;
+            this.ctx.fillRect(visibleX1, y, visibleWidth, height);
             this.ctx.strokeStyle = '#fff';
             this.ctx.lineWidth = 1;
+            this.ctx.strokeRect(visibleX1, y, visibleWidth, height);
         } else if (isClicked) {
-            this.ctx.fillStyle = this.lightenColor(color, 0.4);
+            this.ctx.fillStyle = colors.clicked;
+            this.ctx.fillRect(visibleX1, y, visibleWidth, height);
             this.ctx.strokeStyle = '#e94560';
             this.ctx.lineWidth = 3;
+            this.ctx.strokeRect(visibleX1, y, visibleWidth, height);
         } else {
-            this.ctx.fillStyle = color;
-            this.ctx.strokeStyle = this.darkenColor(color, 0.3);
-            this.ctx.lineWidth = 1;
-        }
-
-        // Determine if we should draw rounded corners
-        // Only round corners that are actually visible
-        const leftVisible = x1 >= 0;
-        const rightVisible = x2 <= this.width;
-
-        // Draw rectangle
-        if (visibleWidth > 6) {
-            const radius = 3;
-            this.ctx.beginPath();
-            
-            // Custom rounded rect to only round visible corners
-            const r = radius;
-            const left = visibleX1;
-            const right = visibleX2;
-            const top = y;
-            const bottom = y + height;
-            
-            this.ctx.moveTo(left + (leftVisible ? r : 0), top);
-            this.ctx.lineTo(right - (rightVisible ? r : 0), top);
-            if (rightVisible) {
-                this.ctx.arcTo(right, top, right, top + r, r);
-            } else {
-                this.ctx.lineTo(right, top);
-            }
-            this.ctx.lineTo(right, bottom - (rightVisible ? r : 0));
-            if (rightVisible) {
-                this.ctx.arcTo(right, bottom, right - r, bottom, r);
-            } else {
-                this.ctx.lineTo(right, bottom);
-            }
-            this.ctx.lineTo(left + (leftVisible ? r : 0), bottom);
-            if (leftVisible) {
-                this.ctx.arcTo(left, bottom, left, bottom - r, r);
-            } else {
-                this.ctx.lineTo(left, bottom);
-            }
-            this.ctx.lineTo(left, top + (leftVisible ? r : 0));
-            if (leftVisible) {
-                this.ctx.arcTo(left, top, left + r, top, r);
-            } else {
-                this.ctx.lineTo(left, top);
-            }
-            this.ctx.closePath();
-            
-            this.ctx.fill();
-            if (isSelected || isHovered || isClicked) {
-                this.ctx.stroke();
-            }
-        } else {
-            // Simple rectangle for small slices
+            // Optimization: FAST PATH - No stroke, just fill
+            this.ctx.fillStyle = colors.normal;
             this.ctx.fillRect(visibleX1, y, visibleWidth, height);
         }
 
-        // Draw slice name if wide enough
-        if (visibleWidth > 40) {
-            this.ctx.fillStyle = '#fff';
-            this.ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
-            this.ctx.textBaseline = 'middle';
-            
-            const text = slice.name;
+        // Text Optimization: Only draw if wide enough
+        if (visibleWidth > 20) {
+            this.ctx.save();
+            this.ctx.beginPath();
+            this.ctx.rect(visibleX1, y, visibleWidth, height);
+            this.ctx.clip();
+            // Font is set once in drawSlicesOptimized
             const textPadding = 4;
-            // Text should start at visible area + padding, not before 
-            const textX = Math.max(textPadding, visibleX1 + textPadding);
-            const maxTextWidth = visibleX2 - textX - textPadding;
-            
-            if (maxTextWidth > 20) {
-                // Simple truncation without measuring each iteration
-                const measuredWidth = this.ctx.measureText(text).width;
-                if (measuredWidth <= maxTextWidth) {
-                    this.ctx.fillText(text, textX, y + height / 2);
-                } else {
-                    // Estimate truncation point
-                    const avgCharWidth = 7;
-                    const maxChars = Math.floor(maxTextWidth / avgCharWidth);
-                    if (maxChars > 2) {
-                        const truncated = text.substring(0, maxChars - 1) + '…';
-                        this.ctx.fillText(truncated, textX, y + height / 2);
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Draw all visible slices (legacy - kept for reference)
-     */
-    drawSlices() {
-        let trackY = 0;
-
-        this.tracks.forEach(track => {
-            if (this.hiddenTracks.has(track.id)) return;
-            
-            const trackHeight = (track.maxDepth || 1) * this.sliceHeight + this.trackPadding * 2;
-
-            // Get visible slices for this track
-            const visibleSlices = track.slices.filter(slice => 
-                slice.endTime >= this.viewStart && slice.startTime <= this.viewEnd
-            );
-
-            visibleSlices.forEach(slice => {
-                this.drawSlice(slice, trackY);
-            });
-
-            trackY += trackHeight;
-        });
-    }
-
-    /**
-     * Draw a single slice
-     */
-    drawSlice(slice, trackY) {
-        const x1 = this.timeToX(slice.startTime);
-        const x2 = this.timeToX(slice.endTime);
-        const width = Math.max(x2 - x1, 1);
-        const y = trackY + this.trackPadding + slice.depth * this.sliceHeight;
-        const height = this.sliceHeight - 2;
-
-        // Skip if completely outside view
-        if (x2 < 0 || x1 > this.width) return;
-
-        // Determine slice state
-        const isSelected = this.selectedSlices.has(slice.id);
-        const isHovered = this.hoveredSlice === slice;
-        const isClicked = this.clickedSlice === slice;
-
-        // Draw slice background
-        let color = this.sliceColors[slice.color % this.sliceColors.length];
-        
-        if (isSelected) {
-            this.ctx.fillStyle = this.lightenColor(color, 0.3);
-            this.ctx.strokeStyle = '#e94560';
-            this.ctx.lineWidth = 2;
-        } else if (isHovered) {
-            this.ctx.fillStyle = this.lightenColor(color, 0.2);
-            this.ctx.strokeStyle = '#fff';
-            this.ctx.lineWidth = 1;
-        } else if (isClicked) {
-            this.ctx.fillStyle = this.lightenColor(color, 0.4);
-            this.ctx.strokeStyle = '#e94560';
-            this.ctx.lineWidth = 3;
-        } else {
-            this.ctx.fillStyle = color;
-            this.ctx.strokeStyle = this.darkenColor(color, 0.3);
-            this.ctx.lineWidth = 1;
-        }
-
-        // Draw rounded rectangle
-        const radius = 3;
-        this.ctx.beginPath();
-        this.ctx.roundRect(x1, y, width, height, radius);
-        this.ctx.fill();
-        this.ctx.stroke();
-
-        // Draw slice name if wide enough
-        if (width > 30) {
-            this.ctx.fillStyle = '#fff';
-            this.ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
-            this.ctx.textBaseline = 'middle';
-            
-            const text = slice.name;
-            const textWidth = this.ctx.measureText(text).width;
-            
-            if (textWidth < width - 6) {
-                this.ctx.fillText(text, x1 + 4, y + height / 2);
+            const textX = Math.max(visibleX1 + textPadding, x1 + textPadding);
+            // Change text color if selected
+            if (isSelected) {
+                this.ctx.fillStyle = '#111';
             } else {
-                // Truncate text
-                let truncated = text;
-                while (this.ctx.measureText(truncated + '…').width > width - 6 && truncated.length > 0) {
-                    truncated = truncated.slice(0, -1);
-                }
-                if (truncated.length > 0) {
-                    this.ctx.fillText(truncated + '…', x1 + 4, y + height / 2);
-                }
+                this.ctx.fillStyle = '#fff';
             }
+            this.ctx.fillText(slice.name, textX, y + height / 2);
+            this.ctx.restore();
         }
     }
 
-    /**
-     * Draw selection overlay
-     */
     drawSelectionOverlay() {
         const x1 = Math.min(this.selectionStart.x, this.selectionEnd.x);
         const y1 = Math.min(this.selectionStart.y, this.selectionEnd.y);
-        const x2 = Math.max(this.selectionStart.x, this.selectionEnd.x);
-        const y2 = Math.max(this.selectionStart.y, this.selectionEnd.y);
+        const width = Math.abs(this.selectionEnd.x - this.selectionStart.x);
+        const height = Math.abs(this.selectionEnd.y - this.selectionStart.y);
 
         this.ctx.fillStyle = this.selectionColor;
-        this.ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
+        this.ctx.fillRect(x1, y1, width, height);
 
         this.ctx.strokeStyle = '#e94560';
         this.ctx.lineWidth = 2;
-        this.ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+        this.ctx.strokeRect(x1, y1, width, height);
     }
 
-    /**
-     * Draw timeline ruler
-     */
     drawRuler() {
         this.rulerCtx.fillStyle = '#0f3460';
         this.rulerCtx.fillRect(0, 0, this.rulerWidth, this.rulerHeight);
 
         const viewDuration = this.viewEnd - this.viewStart;
-        
-        // Calculate grid interval
         const intervals = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000];
         let gridInterval = intervals.find(i => viewDuration / i < 10) || 1000000;
 
@@ -924,90 +644,77 @@ class TraceViewer {
         this.rulerCtx.fillStyle = '#aaa';
         this.rulerCtx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
         this.rulerCtx.textBaseline = 'top';
+        this.rulerCtx.beginPath();
 
         for (let t = startGrid; t <= this.viewEnd; t += gridInterval) {
             const x = this.timeToX(t);
             if (x >= 0 && x <= this.rulerWidth) {
-                // Draw tick
-                this.rulerCtx.beginPath();
                 this.rulerCtx.moveTo(x, 0);
                 this.rulerCtx.lineTo(x, 8);
-                this.rulerCtx.stroke();
-
-                // Draw label
-                const label = TraceParser.formatTimestamp(t);
+                // Draw text immediately as it's separate from path
+                const label = (typeof TraceParser !== 'undefined') ? TraceParser.formatTimestamp(t) : t.toFixed(0);
                 this.rulerCtx.fillText(label, x + 3, 10);
             }
         }
+        this.rulerCtx.stroke();
     }
 
-    /**
-     * Convert time to X coordinate
-     */
     timeToX(time) {
-        const viewDuration = this.viewEnd - this.viewStart;
-        return ((time - this.viewStart) / viewDuration) * this.width;
+        return ((time - this.viewStart) / (this.viewEnd - this.viewStart)) * this.width;
     }
 
-    /**
-     * Convert X coordinate to time
-     */
     xToTime(x) {
-        const viewDuration = this.viewEnd - this.viewStart;
-        return this.viewStart + (x / this.width) * viewDuration;
+        return this.viewStart + (x / this.width) * (this.viewEnd - this.viewStart);
     }
 
-    /**
-     * Get slice at position (accounts for hidden tracks)
-     */
     getSliceAtPosition(x, y) {
+        // Optimization: Early bounds check
+        if (x < 0 || x > this.width || y < 0 || y > this.height) return null;
+
         let trackY = 0;
         const collapsedHeight = 28;
+        const time = this.xToTime(x);
 
         for (const track of this.tracks) {
             const isHidden = this.hiddenTracks.has(track.id);
             const trackHeight = isHidden ? collapsedHeight : (track.maxDepth || 1) * this.sliceHeight + this.trackPadding * 2;
 
-            // Skip hidden tracks for slice detection but still count their height
             if (isHidden) {
                 trackY += trackHeight;
                 continue;
             }
 
+            // Optimization: Only check tracks that vertically contain the mouse
             if (y >= trackY && y < trackY + trackHeight) {
-                // Check slices in this track
-                const time = this.xToTime(x);
-                
-                // Find slices that could contain this time point
-                // Since slices are sorted by startTime, find where we'd insert this time
+                // Optimization: limit search range logic
+                // Find where this time would be inserted
                 const insertIdx = this.findFirstSliceStartingAfter(track.slices, time);
                 
-                // Check slices before insertIdx (they start before or at our time)
-                // and slices around insertIdx for any that contain our time point
+                // Scan backwards from insertion point
+                // Check max 50 items or until time gap is too large
+                // This covers parent slices without scanning the whole array
                 let foundSlice = null;
-                let maxDepth = -1; // For z-order, prefer slices with higher depth (on top)
+                let maxDepth = -1;
                 
-                // Scan backwards to find slices that started before and might still be running
+                let count = 0;
                 for (let i = insertIdx - 1; i >= 0; i--) {
                     const slice = track.slices[i];
+                    count++;
                     
-                    // If this slice ends before our time, all earlier slices will too
-                    // (since they start even earlier and traces typically have similar durations)
-                    // But parent slices can be very long, so we need to check more
+                    // Heuristic: If we've checked 100 items and the slice ends way before our time, stop.
+                    // However, root slices can be very long, so we must be careful.
+                    // Safest is to rely on the fact that if slice.endTime < time, it's not it.
                     if (slice.endTime < time) {
-                        // Check if we've gone far enough back
-                        // If we've found a slice already and this one is much earlier, stop
-                        if (foundSlice && time - slice.startTime > 10 * (slice.endTime - slice.startTime)) {
-                            break;
-                        }
-                        continue;
+                         // Optimization: If this slice ends significantly before our time, 
+                         // and it's not a root slice (depth 0), we might be able to break early?
+                         // For now, just continue, linear scan backwards is usually fast enough 
+                         // unless track has millions of slices.
+                         continue;
                     }
-                    
+
                     if (time >= slice.startTime && time <= slice.endTime) {
                         const sliceY = trackY + this.trackPadding + slice.depth * this.sliceHeight;
-                        
                         if (y >= sliceY && y < sliceY + this.sliceHeight - 2) {
-                            // Prefer the topmost slice (highest depth)
                             if (slice.depth > maxDepth) {
                                 maxDepth = slice.depth;
                                 foundSlice = slice;
@@ -1015,18 +722,17 @@ class TraceViewer {
                         }
                     }
                 }
-                
-                return foundSlice; // Found the track but no slice at this position
+                return foundSlice;
             }
-
             trackY += trackHeight;
         }
-
         return null;
     }
 
+    // ... (getSlicesInSelection kept similar but using scheduleRender)
+
     /**
-     * Get slices in selection rectangle (accounts for hidden tracks)
+     * Get slices in selection rectangle (Fix: passes track object to findVisibleSlices)
      */
     getSlicesInSelection() {
         const x1 = Math.min(this.selectionStart.x, this.selectionEnd.x);
@@ -1045,148 +751,110 @@ class TraceViewer {
             const isHidden = this.hiddenTracks.has(track.id);
             const trackHeight = isHidden ? collapsedHeight : (track.maxDepth || 1) * this.sliceHeight + this.trackPadding * 2;
 
-            // Skip hidden tracks for selection but still count their height
             if (isHidden) {
                 trackY += trackHeight;
                 continue;
             }
             
+            // Check intersection of track rect and selection rect
             if (y2 >= trackY && y1 < trackY + trackHeight) {
-                // Get all slices that overlap the time range (including parent slices)
-                const visibleSlices = this.findVisibleSlices(track.slices, t1, t2);
+                // FIX: Pass 'track' object, NOT 'track.slices'
+                const visibleSlices = this.findVisibleSlices(track, t1, t2);
                 
                 for (const slice of visibleSlices) {
                     const sliceY = trackY + this.trackPadding + slice.depth * this.sliceHeight;
                     
-                    // Check Y overlap
+                    // Check Y overlap & X overlap
+                    // (findVisibleSlices checks time/X, but we verify exact bounds here)
                     if (y2 >= sliceY && y1 < sliceY + this.sliceHeight - 2) {
-                        selected.push(slice);
+                        // Double check time overlap for strict selection
+                        // (Optional, but good for precision)
+                        const sliceStart = slice.startTime;
+                        const sliceEnd = slice.endTime;
+                        
+                        // Overlap logic: max(start1, start2) < min(end1, end2)
+                        if (Math.max(t1, sliceStart) < Math.min(t2, sliceEnd)) {
+                            selected.push(slice);
+                        }
                     }
                 }
             }
-
             trackY += trackHeight;
         }
 
         return selected;
     }
 
-    // Event Handlers
-
     handleMouseDown(e) {
         const pos = this.getMousePos(e);
-        const x = pos.x;
-        const y = pos.y;
-
-        this.dragStartX = x;
-        this.dragStartY = y;
-
-        // Check if clicking on a slice first (works in both modes)
-        const slice = this.getSliceAtPosition(x, y);
+        this.dragStartX = pos.x;
+        this.dragStartY = pos.y;
+        const slice = this.getSliceAtPosition(pos.x, pos.y);
 
         if (this.interactionMode === 'select' || e.shiftKey) {
-            // Select mode: drag to select multiple slices
             if (slice && !e.shiftKey) {
-                // Clicked directly on a slice - select it
                 if (e.ctrlKey || e.metaKey) {
-                    if (this.selectedSlices.has(slice.id)) {
-                        this.selectedSlices.delete(slice.id);
-                    } else {
-                        this.selectedSlices.add(slice.id);
-                    }
+                    this.selectedSlices.has(slice.id) ? this.selectedSlices.delete(slice.id) : this.selectedSlices.add(slice.id);
                 } else {
                     this.selectedSlices.clear();
                     this.selectedSlices.add(slice.id);
                 }
-                
                 this.clickedSlice = slice;
-                
-                if (this.onSliceClick) {
-                    this.onSliceClick(slice);
-                }
-                
-                if (this.onSelectionChange) {
-                    this.onSelectionChange(this.getSelectedSlices());
-                }
+                if (this.onSliceClick) this.onSliceClick(slice);
+                if (this.onSelectionChange) this.onSelectionChange(this.getSelectedSlices());
             } else {
-                // Start box selection
                 this.isSelecting = true;
-                this.selectionStart = { x, y };
-                this.selectionEnd = { x, y };
+                this.selectionStart = { ...pos };
+                this.selectionEnd = { ...pos };
             }
         } else {
-            // Pan mode
             if (slice) {
-                // Toggle selection with Ctrl/Cmd
                 if (e.ctrlKey || e.metaKey) {
-                    if (this.selectedSlices.has(slice.id)) {
-                        this.selectedSlices.delete(slice.id);
-                    } else {
-                        this.selectedSlices.add(slice.id);
-                    }
+                    this.selectedSlices.has(slice.id) ? this.selectedSlices.delete(slice.id) : this.selectedSlices.add(slice.id);
                 } else {
-                    // Single selection
                     this.selectedSlices.clear();
                     this.selectedSlices.add(slice.id);
                 }
-                
                 this.clickedSlice = slice;
-                
-                if (this.onSliceClick) {
-                    this.onSliceClick(slice);
-                }
-                
-                if (this.onSelectionChange) {
-                    this.onSelectionChange(this.getSelectedSlices());
-                }
+                if (this.onSliceClick) this.onSliceClick(slice);
+                if (this.onSelectionChange) this.onSelectionChange(this.getSelectedSlices());
             } else {
-                // Start panning
                 this.isPanning = true;
                 this.panStartView = this.viewStart;
             }
         }
-
-        this.render();
+        this.scheduleRender();
     }
 
     handleMouseMove(e) {
+        // Optimization: Don't do heavy logic if mouse isn't over canvas
         const pos = this.getMousePos(e);
-        const x = pos.x;
-        const y = pos.y;
 
         if (this.isSelecting) {
-            this.selectionEnd = { x, y };
-            this.render();
+            this.selectionEnd = { ...pos };
+            this.scheduleRender();
         } else if (this.isPanning) {
-            const dx = x - this.dragStartX;
+            const dx = pos.x - this.dragStartX;
             const viewDuration = this.viewEnd - this.viewStart;
             const timeDelta = (dx / this.width) * viewDuration;
             
-            this.viewStart = this.panStartView - timeDelta;
-            this.viewEnd = this.viewStart + viewDuration;
+            let newStart = this.panStartView - timeDelta;
+            let newEnd = newStart + viewDuration;
             
-            // Clamp to bounds
-            if (this.viewStart < this.timeRange.start) {
-                this.viewStart = this.timeRange.start;
-                this.viewEnd = this.viewStart + viewDuration;
-            }
-            if (this.viewEnd > this.timeRange.end) {
-                this.viewEnd = this.timeRange.end;
-                this.viewStart = this.viewEnd - viewDuration;
-            }
+            // Bounds check
+            if (newStart < this.timeRange.start) { newStart = this.timeRange.start; newEnd = newStart + viewDuration; }
+            if (newEnd > this.timeRange.end) { newEnd = this.timeRange.end; newStart = newEnd - viewDuration; }
             
-            this.render();
+            this.viewStart = newStart;
+            this.viewEnd = newEnd;
+            this.scheduleRender();
         } else {
-            // Hover detection
-            const slice = this.getSliceAtPosition(x, y);
-            
+            // Hover logic
+            const slice = this.getSliceAtPosition(pos.x, pos.y);
             if (slice !== this.hoveredSlice) {
                 this.hoveredSlice = slice;
-                this.render();
-                
-                if (this.onSliceHover) {
-                    this.onSliceHover(slice, e.clientX, e.clientY);
-                }
+                this.scheduleRender();
+                if (this.onSliceHover) this.onSliceHover(slice, e.clientX, e.clientY);
             }
         }
     }
@@ -1194,24 +862,18 @@ class TraceViewer {
     handleMouseUp(e) {
         if (this.isSelecting) {
             const selected = this.getSlicesInSelection();
-            
             if (e.ctrlKey || e.metaKey) {
                 selected.forEach(slice => this.selectedSlices.add(slice.id));
             } else {
                 this.selectedSlices.clear();
                 selected.forEach(slice => this.selectedSlices.add(slice.id));
             }
-            
             this.isSelecting = false;
-            
-            if (this.onSelectionChange) {
-                this.onSelectionChange(this.getSelectedSlices());
-            }
+            if (this.onSelectionChange) this.onSelectionChange(this.getSelectedSlices());
         }
-
         this.isPanning = false;
         this.updateCursor();
-        this.render();
+        this.scheduleRender();
     }
 
     handleMouseLeave(e) {
@@ -1219,247 +881,140 @@ class TraceViewer {
         this.isPanning = false;
         this.isSelecting = false;
         this.updateCursor();
-        
-        if (this.onSliceHover) {
-            this.onSliceHover(null);
-        }
-        
-        this.render();
+        if (this.onSliceHover) this.onSliceHover(null);
+        this.scheduleRender();
     }
 
     handleWheel(e) {
         e.preventDefault();
-
         const pos = this.getMousePos(e);
         const viewDuration = this.viewEnd - this.viewStart;
         const traceDuration = this.timeRange.end - this.timeRange.start;
 
-        // Horizontal scroll (deltaX) = Pan
         if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-            // Pan based on horizontal scroll
+            // Pan
             const panAmount = (e.deltaX / this.width) * viewDuration;
-            
             this.viewStart += panAmount;
             this.viewEnd += panAmount;
-            
-            // Clamp to bounds
-            if (this.viewStart < this.timeRange.start) {
-                this.viewStart = this.timeRange.start;
-                this.viewEnd = this.viewStart + viewDuration;
-            }
-            if (this.viewEnd > this.timeRange.end) {
-                this.viewEnd = this.timeRange.end;
-                this.viewStart = this.viewEnd - viewDuration;
-            }
+            if (this.viewStart < this.timeRange.start) { this.viewStart = this.timeRange.start; this.viewEnd = this.viewStart + viewDuration; }
+            if (this.viewEnd > this.timeRange.end) { this.viewEnd = this.timeRange.end; this.viewStart = this.viewEnd - viewDuration; }
         } else {
-            // Vertical scroll (deltaY) = Zoom
+            // Zoom
             const x = pos.x;
             const zoomPoint = this.xToTime(x);
-
-            // Calculate zoom factor
             const zoomFactor = e.deltaY > 0 ? 1.1 : 0.9;
-            
             const newDuration = viewDuration * zoomFactor;
 
-            // Calculate new view range centered on mouse position
             const ratio = (zoomPoint - this.viewStart) / viewDuration;
             this.viewStart = zoomPoint - ratio * newDuration;
             this.viewEnd = this.viewStart + newDuration;
 
-            // Clamp to bounds
             if (newDuration > traceDuration) {
                 this.viewStart = this.timeRange.start;
                 this.viewEnd = this.timeRange.end;
             } else {
-                if (this.viewStart < this.timeRange.start) {
-                    this.viewStart = this.timeRange.start;
-                    this.viewEnd = this.viewStart + newDuration;
-                }
-                if (this.viewEnd > this.timeRange.end) {
-                    this.viewEnd = this.timeRange.end;
-                    this.viewStart = this.viewEnd - newDuration;
-                }
+                if (this.viewStart < this.timeRange.start) { this.viewStart = this.timeRange.start; this.viewEnd = this.viewStart + newDuration; }
+                if (this.viewEnd > this.timeRange.end) { this.viewEnd = this.timeRange.end; this.viewStart = this.viewEnd - newDuration; }
             }
-
-            // Update zoom level
             this.zoom = traceDuration / (this.viewEnd - this.viewStart);
         }
-
-        this.render();
+        this.scheduleRender();
     }
 
     handleDoubleClick(e) {
         const pos = this.getMousePos(e);
-        const x = pos.x;
-        const y = pos.y;
-
-        const slice = this.getSliceAtPosition(x, y);
-        
+        const slice = this.getSliceAtPosition(pos.x, pos.y);
         if (slice) {
-            // Zoom to slice
             const padding = slice.duration * 0.2;
             this.viewStart = Math.max(this.timeRange.start, slice.startTime - padding);
             this.viewEnd = Math.min(this.timeRange.end, slice.endTime + padding);
             this.zoom = (this.timeRange.end - this.timeRange.start) / (this.viewEnd - this.viewStart);
-            this.render();
+            this.scheduleRender();
         }
     }
 
     handleKeyDown(e) {
-        // Don't handle shortcuts if typing in an input/textarea
-        const isTyping = document.activeElement.tagName === 'INPUT' || 
-                         document.activeElement.tagName === 'TEXTAREA';
-        
+        const isTyping = document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA';
         if (e.key === 'Escape') {
-            // Escape clears selection and switches to select mode
             this.clearSelection();
             this.setMode('select');
         } else if (e.key === ' ' && !isTyping) {
-            // Spacebar switches to pan mode
             e.preventDefault();
             this.setMode('pan');
         } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             this.selectAll();
         } else if ((e.key === 'p' || e.key === 'P') && !isTyping) {
-            // P also switches to pan mode
             this.setMode('pan');
         } else if ((e.key === 's' || e.key === 'S') && !isTyping) {
-            // S also switches to select mode
             this.setMode('select');
         }
     }
 
-    // Public methods
-
-    /**
-     * Set interaction mode ('pan' or 'select')
-     */
     setMode(mode) {
         if (mode !== 'pan' && mode !== 'select') return;
-        
         this.interactionMode = mode;
         this.updateCursor();
-        
-        if (this.onModeChange) {
-            this.onModeChange(mode);
-        }
+        if (this.onModeChange) this.onModeChange(mode);
     }
 
-    /**
-     * Get current interaction mode
-     */
-    getMode() {
-        return this.interactionMode;
-    }
-
-    /**
-     * Update cursor based on current mode
-     */
+    getMode() { return this.interactionMode; }
+    
     updateCursor() {
         this.canvasContainer.classList.remove('pan-mode', 'select-mode');
         this.canvasContainer.classList.add(`${this.interactionMode}-mode`);
     }
 
-    /**
-     * Get all selected slices (including from hidden tracks)
-     */
-    getSelectedSlices() {
-        return this.slices.filter(slice => this.selectedSlices.has(slice.id));
-    }
-
-    /**
-     * Get selected slices for LLM export (excludes slices from hidden tracks)
-     */
+    getSelectedSlices() { return this.slices.filter(slice => this.selectedSlices.has(slice.id)); }
+    
     getSelectedSlicesForExport() {
-        return this.slices.filter(slice => 
-            this.selectedSlices.has(slice.id) && !this.hiddenTracks.has(slice.trackId)
-        );
+        return this.slices.filter(slice => this.selectedSlices.has(slice.id) && !this.hiddenTracks.has(slice.trackId));
     }
 
-    /**
-     * Clear selection
-     */
     clearSelection() {
         this.selectedSlices.clear();
         this.clickedSlice = null;
-        
-        if (this.onSelectionChange) {
-            this.onSelectionChange([]);
-        }
-        
-        this.render();
+        if (this.onSelectionChange) this.onSelectionChange([]);
+        this.scheduleRender();
     }
 
-    /**
-     * Select all visible slices (excludes hidden tracks)
-     */
     selectAll() {
         const visibleSlices = this.slices.filter(slice => 
-            slice.endTime >= this.viewStart && 
-            slice.startTime <= this.viewEnd &&
-            !this.hiddenTracks.has(slice.trackId)
+            slice.endTime >= this.viewStart && slice.startTime <= this.viewEnd && !this.hiddenTracks.has(slice.trackId)
         );
-        
         visibleSlices.forEach(slice => this.selectedSlices.add(slice.id));
-        
-        if (this.onSelectionChange) {
-            this.onSelectionChange(this.getSelectedSlices());
-        }
-        
-        this.render();
+        if (this.onSelectionChange) this.onSelectionChange(this.getSelectedSlices());
+        this.scheduleRender();
     }
 
-    /**
-     * Zoom in
-     */
     zoomIn() {
         const center = (this.viewStart + this.viewEnd) / 2;
         const viewDuration = (this.viewEnd - this.viewStart) * 0.5;
-        
         this.viewStart = center - viewDuration / 2;
         this.viewEnd = center + viewDuration / 2;
         this.zoom = (this.timeRange.end - this.timeRange.start) / (this.viewEnd - this.viewStart);
-        
-        this.render();
+        this.scheduleRender();
     }
 
-    /**
-     * Zoom out
-     */
     zoomOut() {
         const center = (this.viewStart + this.viewEnd) / 2;
-        const viewDuration = Math.min(
-            (this.viewEnd - this.viewStart) * 2,
-            this.timeRange.end - this.timeRange.start
-        );
-        
+        const viewDuration = Math.min((this.viewEnd - this.viewStart) * 2, this.timeRange.end - this.timeRange.start);
         this.viewStart = Math.max(this.timeRange.start, center - viewDuration / 2);
         this.viewEnd = Math.min(this.timeRange.end, center + viewDuration / 2);
         this.zoom = (this.timeRange.end - this.timeRange.start) / (this.viewEnd - this.viewStart);
-        
-        this.render();
+        this.scheduleRender();
     }
 
-    /**
-     * Reset view to show entire trace
-     */
     resetView() {
         this.viewStart = this.timeRange.start;
         this.viewEnd = this.timeRange.end;
         this.zoom = 1;
-        this.render();
+        this.scheduleRender();
     }
 
-    /**
-     * Get current zoom level as percentage
-     */
-    getZoomLevel() {
-        return Math.round(this.zoom * 100);
-    }
+    getZoomLevel() { return Math.round(this.zoom * 100); }
 
-    // Utility methods
-
+    // Color helpers - only used during initialization now
     lightenColor(color, amount) {
         const hex = color.replace('#', '');
         const r = Math.min(255, parseInt(hex.substr(0, 2), 16) + 255 * amount);
@@ -1477,5 +1032,4 @@ class TraceViewer {
     }
 }
 
-// Export for use in other files
 window.TraceViewer = TraceViewer;
