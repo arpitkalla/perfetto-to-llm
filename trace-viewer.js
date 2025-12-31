@@ -90,7 +90,16 @@ class TraceViewer {
 
         // Initialize
         this.dpr = window.devicePixelRatio || 1;
+        this.bgColor = '#f7f8fa'; 
+
+        // Initialize
+        this.dpr = window.devicePixelRatio || 1;
         this.setupCanvas();
+        
+        // ADD THIS: Immediately paint the background to hide the "alpha: false" black default
+        this.ctx.fillStyle = this.bgColor;
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
         this.setupEventListeners();
     }
 

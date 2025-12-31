@@ -480,6 +480,7 @@ body {
     position: absolute;
     top: 0;
     left: 0;
+    background: var(--bg-secondary);
 }
 
 /* Selection Overlay */
